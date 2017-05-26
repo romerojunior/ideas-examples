@@ -5,6 +5,7 @@
 import inspect
 import shlex
 import signal
+import math
 import sys
 
 from cmd import Cmd
@@ -26,7 +27,25 @@ def split(func):
     return result
 
 
+class ScientificCalcREPL(Cmd):
+
+    prompt = "[Scientific >>] "
+
+    @split
+    def do_pow(self, a, b):
+        print (pow(int(a), int(b)))
+
+    @split
+    def do_factorial(self, a):
+        print math.factorial(int(a))
+
+    def do_quit(self, args):
+        return True
+
+
 class CalcREPL(Cmd):
+
+    prompt = "[Basic >>] "
 
     def do_quit(self, args):
         """Quits the program."""
@@ -48,15 +67,16 @@ class CalcREPL(Cmd):
     def do_divide(self, a, b):
         print (int(a) / int(b))
 
+    def do_scientific(self, args):
+        sub_cmd = ScientificCalcREPL()
+        sub_cmd.cmdloop()
+
     def do_EOF(self, args):
         raise SystemExit
 
 if __name__ == "__main__":
 
-    print dir(signal)
     signal.signal(signal.SIGINT, singal_handler)
-
-    CalcREPL.prompt = "[>>] "
 
     CalcREPL.intro = "Welcome to the interactive REPL calculator!"
 
