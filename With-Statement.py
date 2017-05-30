@@ -3,7 +3,7 @@
 
 class ClassTest:
 
-	def __init__(self, msg):
+	def __init__(self, msg="Second output"):
 		self.MSG = msg
 
 	def __enter__(self):
@@ -20,7 +20,7 @@ class ClassTest:
 
 if __name__ == "__main__":
 
-	with ClassTest("Second output") as test:
+	with ClassTest() as test:
 		print test.MSG
 		print test.just_a_method('ouput')
 
