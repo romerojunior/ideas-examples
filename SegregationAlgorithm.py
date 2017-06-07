@@ -311,7 +311,7 @@ def segregate_cluster(host_list):
     :param host_list: an arbitrary list of `Host` instances
     """
 
-    # checks if the list of hosts is valid:
+    # checks if the list of hosts is valid and iterable:
     for _host in host_list:
         if not isinstance(_host, Host):
             raise InvalidHostList
