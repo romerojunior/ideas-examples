@@ -113,18 +113,35 @@ LINUX = 'LinuxVM'
 WIN = 'WindowsVM'
 
 
+class InvalidHostList(Exception):
+    """Raised if the segregation algorithm receives an invalid list of hosts"""
+    def __init__(self):
+        msg = "Cannot handle an invalid list of hosts."
+        Exception.__init__(self, msg)
+    pass
+
+
 class DestinationHostFull(Exception):
     """Raised if the destination host doesn't have enough capacity"""
+    def __init__(self):
+        msg = "The destination host is full."
+        Exception.__init__(self, msg)
     pass
 
 
 class SameSourceAndDestinationHost(Exception):
     """Raised if the destination host and source host are the same device"""
+    def __init__(self):
+        msg = "Migration to and from the same host is not possible."
+        Exception.__init__(self, msg)
     pass
 
 
 class MigrateVMWithAffinity(Exception):
     """Raised if virtual machine belong to an affinity group"""
+    def __init__(self):
+        msg = "Virtual machines with affinity group won't be migrated."
+        Exception.__init__(self, msg)
     pass
 
 
@@ -293,6 +310,12 @@ def segregate_cluster(host_list):
 
     :param host_list: an arbitrary list of `Host` instances
     """
+
+    # checks if the list of hosts is valid:
+    for _host in host_list:
+        if not isinstance(_host, Host):
+            raise InvalidHostList
+
     iterate = True
 
     while iterate:
