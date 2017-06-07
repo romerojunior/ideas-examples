@@ -28,9 +28,15 @@ machines within a group of hosts (Cosmic or Cloudstack), thus helping reducing
 the amount of licenses needed for all Microsoft(R) Windows hosts. The implemen-
 tation is based on a ranking algorithms. 
 
+Import considerations:
+
+    * Each [FULL] host will ignored from iterations (no resources available);
+    * Each virtual machine with a defined affinity group won't be migrated;
+      By default the VM property `has_affinity` is set to False.    
+
 Example:
     
-    4 hosts cluster or pod:
+    4 hosts cluster:
     
     Mc: Host with the greatest amount of Microsoft(R) Windows virtual machines
     Lc: Host with the least amount of Microsoft(R) Windows virtual machines
@@ -411,6 +417,3 @@ if __name__ == "__main__":
         for virtual_machine in host.vms:
             print host.host_id, virtual_machine.vm_id, virtual_machine.os_type
         print
-
-
-
