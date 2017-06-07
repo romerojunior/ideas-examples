@@ -61,7 +61,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
           |___________|___________|___________|___________|
                |            |           |
                Mc          Lc           Ec
-        
+
            ___Host0___ ___Host1___ ___Host2___ ___Host3___
           |   W  W    |        L  |  L     -  |  L   L    |
           |  W      - | -  L      |     W     |    L   L  |
@@ -70,7 +70,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
           |___________|___________|___________|___________|
                |          |  |
                Mc        Lc  Ec
-        
+
            ___Host0___ ___Host1___ ___Host2___ ___Host3___
           |   W  W    |        L  |  L     -  |  L   L    |
           |  W      - | -  L      |     W     |    L   L  |
@@ -79,7 +79,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
           |___________|___________|___________|___________|
                |           |            |
                Mc          Ec          Lc
-               
+
            ___Host0___ ___Host1___ ___Host2___ ___Host3___
           |   W  W    |        L  |  L     -  |  L   L    |
           |  W      W | -  L      |     W     |    L   L  |
@@ -88,7 +88,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
           |___________|___________|___________|___________|
                |           |            |
                Mc          Ec          Lc
-               
+
            __[FULL]___ ___Host1___ ___Host2___ ___Host3___
           |   W  W    |        L  |  L     -  |  L   L    |
           |  W      W | -  L      |     W     |    L   L  |
@@ -97,7 +97,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
           |___________|___________|___________|___________|
                             |         |    |
                            Ec        Lc   Mc                Lc == Mc -> END.
-    
+
 """
 
 from operator import attrgetter
@@ -117,6 +117,11 @@ class SameSourceAndDestinationHost(Exception):
     pass
 
 
+class MigrateVMWithAffinity(Exception):
+    """Raised if virtual machine belong to an affinity group"""
+    pass
+
+
 class VM(object):
     def __init__(self, vm_id, os_type):
         self.vm_id = vm_id
@@ -126,6 +131,11 @@ class VM(object):
     def capacity_required(self):
         """The amount of capacity required in a host to allocated this VM"""
         return 1
+
+    @property
+    def has_affinity(self):
+        """Check if the virtual machine belongs to any affinity rule"""
+        return False
 
 
 class Host(object):
@@ -226,6 +236,9 @@ def migrate_vm(vm, src_host, dst_host):
     :return: True if the virtual machine has been migrated or False otherwise
     :rtype: bool
     """
+    if vm.has_affinity:
+        # migration not needed when affinity group is set
+        raise MigrateVMWithAffinity
     if src_host == dst_host:
         # migration is not needed nor possible
         # add warn log message
@@ -370,6 +383,8 @@ if __name__ == "__main__":
                            src_host=most_windows_host_lst[0],
                            dst_host=most_empty_host_lst[0])
                 break
+            except MigrateVMWithAffinity:
+                continue
             except SameSourceAndDestinationHost:
                 continue
             except DestinationHostFull:
@@ -383,6 +398,8 @@ if __name__ == "__main__":
                            src_host=least_windows_host_lst[0],
                            dst_host=most_windows_host_lst[0])
                 break
+            except MigrateVMWithAffinity:
+                continue
             except SameSourceAndDestinationHost:
                 iterate = False
                 continue
