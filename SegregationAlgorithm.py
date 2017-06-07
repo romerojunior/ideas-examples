@@ -40,7 +40,7 @@ Example:
     
     Mc: Host with the greatest amount of Microsoft(R) Windows virtual machines
     Lc: Host with the least amount of Microsoft(R) Windows virtual machines
-    Ec: Host with the biggest amount of unallocated resources
+    Ec: Host with the largest amount of unallocated resources
     W:  Microsoft(R) Windows virtual machine
     L:  Linux virtual machine
     -:  Unallocated resource
@@ -287,101 +287,23 @@ def is_windows(vm):
     return True if vm.os_type == WIN else False
 
 
-host0 = Host('host0')
-host1 = Host('host1')
-host2 = Host('host2')
-host3 = Host('host3')
-host4 = Host('host4')
-host5 = Host('host5')
-host6 = Host('host6')
-host7 = Host('host7')
+def segregate_cluster(host_list):
+    """ Main algorithm (procedure) for segregating virtual machines, refer to 
+    docstring at the beginning of this module for detailed information.
 
-host0.vms.append(VM('vm-1', WIN))
-host0.vms.append(VM('vm-2', LINUX))
-host0.vms.append(VM('vm-3', LINUX))
-host0.vms.append(VM('vm-4', LINUX))
-host0.vms.append(VM('vm-5', LINUX))
-host0.vms.append(VM('vm-6', WIN))
-host0.vms.append(VM('vm-7', LINUX))
-host0.vms.append(VM('vm-8', WIN))
-host0.vms.append(VM('vm-9', WIN))
-
-host1.vms.append(VM('vm-10', WIN))
-host1.vms.append(VM('vm-11', WIN))
-host1.vms.append(VM('vm-12', LINUX))
-host1.vms.append(VM('vm-13', LINUX))
-host1.vms.append(VM('vm-14', WIN))
-host1.vms.append(VM('vm-15', LINUX))
-host1.vms.append(VM('vm-16', LINUX))
-host1.vms.append(VM('vm-17', WIN))
-
-host2.vms.append(VM('vm-18', WIN))
-host2.vms.append(VM('vm-19', WIN))
-host2.vms.append(VM('vm-20', WIN))
-host2.vms.append(VM('vm-21', LINUX))
-host2.vms.append(VM('vm-22', LINUX))
-host2.vms.append(VM('vm-23', LINUX))
-
-host3.vms.append(VM('vm-24', WIN))
-host3.vms.append(VM('vm-25', WIN))
-host3.vms.append(VM('vm-26', WIN))
-host3.vms.append(VM('vm-27', WIN))
-host3.vms.append(VM('vm-28', LINUX))
-host3.vms.append(VM('vm-29', LINUX))
-host3.vms.append(VM('vm-30', WIN))
-host3.vms.append(VM('vm-31', LINUX))
-
-host4.vms.append(VM('vm-32', WIN))
-host4.vms.append(VM('vm-33', WIN))
-host4.vms.append(VM('vm-34', WIN))
-host4.vms.append(VM('vm-35', WIN))
-host4.vms.append(VM('vm-36', WIN))
-host4.vms.append(VM('vm-37', LINUX))
-host4.vms.append(VM('vm-38', WIN))
-host4.vms.append(VM('vm-39', LINUX))
-
-host5.vms.append(VM('vm-40', WIN))
-host5.vms.append(VM('vm-41', LINUX))
-host5.vms.append(VM('vm-42', LINUX))
-host5.vms.append(VM('vm-43', WIN))
-host5.vms.append(VM('vm-44', WIN))
-host5.vms.append(VM('vm-45', LINUX))
-host5.vms.append(VM('vm-46', WIN))
-host5.vms.append(VM('vm-47', LINUX))
-
-host6.vms.append(VM('vm-48', LINUX))
-host6.vms.append(VM('vm-49', WIN))
-host6.vms.append(VM('vm-50', LINUX))
-host6.vms.append(VM('vm-51', WIN))
-host6.vms.append(VM('vm-52', LINUX))
-host6.vms.append(VM('vm-53', LINUX))
-host6.vms.append(VM('vm-54', WIN))
-host6.vms.append(VM('vm-55', LINUX))
-
-host7.vms.append(VM('vm-56', WIN))
-host7.vms.append(VM('vm-57', LINUX))
-host7.vms.append(VM('vm-58', WIN))
-host7.vms.append(VM('vm-59', LINUX))
-host7.vms.append(VM('vm-60', WIN))
-host7.vms.append(VM('vm-61', LINUX))
-host7.vms.append(VM('vm-62', WIN))
-host7.vms.append(VM('vm-63', LINUX))
-
-
-cluster = [host0, host1, host2, host3, host4, host5, host6, host7]
-
-
-if __name__ == "__main__":
-
+    :param host_list: an arbitrary list of `Host` instances
+    """
     iterate = True
 
     while iterate:
 
-        most_windows_host_lst = most_windows_stack(cluster)
-        most_empty_host_lst = most_empty_stack(cluster)
-        least_windows_host_lst = least_windows_stack(cluster)
+        most_windows_host_lst = most_windows_stack(host_list)
+        most_empty_host_lst = most_empty_stack(host_list)
+        least_windows_host_lst = least_windows_stack(host_list)
 
-        # migrating linux vms from most windows most to emptiest host:
+        # migrates the first possible Linux virtual machine from the host with
+        # the greatest amount of Microsoft(R) Windows virtual machines to the
+        # host with the largest amount of unallocated resources.
         for linux_vm in filter(is_linux, most_windows_host_lst[0].vms):
 
             try:
@@ -396,7 +318,10 @@ if __name__ == "__main__":
             except DestinationHostFull:
                 continue
 
-        # migrating windows vms from least windows hosts to most windows host:
+        # migrates the first possible Microsoft(R) Windows virtual machine from
+        # the host with the least amount of Microsoft(R) Windows virtual
+        # machines to the host with the greatest amount of Microsoft(R) Windows
+        # virtual machines.
         for windows_vm in filter(is_windows, least_windows_host_lst[0].vms):
 
             try:
@@ -411,6 +336,95 @@ if __name__ == "__main__":
                 continue
             except DestinationHostFull:
                 continue
+
+
+if __name__ == "__main__":
+
+    # mocking:
+
+    host0 = Host('host0')
+    host1 = Host('host1')
+    host2 = Host('host2')
+    host3 = Host('host3')
+    host4 = Host('host4')
+    host5 = Host('host5')
+    host6 = Host('host6')
+    host7 = Host('host7')
+
+    host0.vms.append(VM('vm-1', WIN))
+    host0.vms.append(VM('vm-2', LINUX))
+    host0.vms.append(VM('vm-3', LINUX))
+    host0.vms.append(VM('vm-4', LINUX))
+    host0.vms.append(VM('vm-5', LINUX))
+    host0.vms.append(VM('vm-6', WIN))
+    host0.vms.append(VM('vm-7', LINUX))
+    host0.vms.append(VM('vm-8', WIN))
+    host0.vms.append(VM('vm-9', WIN))
+
+    host1.vms.append(VM('vm-10', WIN))
+    host1.vms.append(VM('vm-11', WIN))
+    host1.vms.append(VM('vm-12', LINUX))
+    host1.vms.append(VM('vm-13', LINUX))
+    host1.vms.append(VM('vm-14', WIN))
+    host1.vms.append(VM('vm-15', LINUX))
+    host1.vms.append(VM('vm-16', LINUX))
+    host1.vms.append(VM('vm-17', WIN))
+
+    host2.vms.append(VM('vm-18', WIN))
+    host2.vms.append(VM('vm-19', WIN))
+    host2.vms.append(VM('vm-20', WIN))
+    host2.vms.append(VM('vm-21', LINUX))
+    host2.vms.append(VM('vm-22', LINUX))
+    host2.vms.append(VM('vm-23', LINUX))
+
+    host3.vms.append(VM('vm-24', WIN))
+    host3.vms.append(VM('vm-25', WIN))
+    host3.vms.append(VM('vm-26', WIN))
+    host3.vms.append(VM('vm-27', WIN))
+    host3.vms.append(VM('vm-28', LINUX))
+    host3.vms.append(VM('vm-29', LINUX))
+    host3.vms.append(VM('vm-30', WIN))
+    host3.vms.append(VM('vm-31', LINUX))
+
+    host4.vms.append(VM('vm-32', WIN))
+    host4.vms.append(VM('vm-33', WIN))
+    host4.vms.append(VM('vm-34', WIN))
+    host4.vms.append(VM('vm-35', WIN))
+    host4.vms.append(VM('vm-36', WIN))
+    host4.vms.append(VM('vm-37', LINUX))
+    host4.vms.append(VM('vm-38', WIN))
+    host4.vms.append(VM('vm-39', LINUX))
+
+    host5.vms.append(VM('vm-40', WIN))
+    host5.vms.append(VM('vm-41', LINUX))
+    host5.vms.append(VM('vm-42', LINUX))
+    host5.vms.append(VM('vm-43', WIN))
+    host5.vms.append(VM('vm-44', WIN))
+    host5.vms.append(VM('vm-45', LINUX))
+    host5.vms.append(VM('vm-46', WIN))
+    host5.vms.append(VM('vm-47', LINUX))
+
+    host6.vms.append(VM('vm-48', LINUX))
+    host6.vms.append(VM('vm-49', WIN))
+    host6.vms.append(VM('vm-50', LINUX))
+    host6.vms.append(VM('vm-51', WIN))
+    host6.vms.append(VM('vm-52', LINUX))
+    host6.vms.append(VM('vm-53', LINUX))
+    host6.vms.append(VM('vm-54', WIN))
+    host6.vms.append(VM('vm-55', LINUX))
+
+    host7.vms.append(VM('vm-56', WIN))
+    host7.vms.append(VM('vm-57', LINUX))
+    host7.vms.append(VM('vm-58', WIN))
+    host7.vms.append(VM('vm-59', LINUX))
+    host7.vms.append(VM('vm-60', WIN))
+    host7.vms.append(VM('vm-61', LINUX))
+    host7.vms.append(VM('vm-62', WIN))
+    host7.vms.append(VM('vm-63', LINUX))
+
+    cluster = [host0, host1, host2, host3, host4, host5, host6, host7]
+
+    segregate_cluster(host_list=cluster)
 
     print
     for host in cluster:
