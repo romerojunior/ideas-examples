@@ -39,65 +39,65 @@ Example:
     L:  Linux virtual machine
     -:  Unallocated resource
       
-     ___Host0___ ___Host1___ ___Host2___ ___Host3___
-    |   -  W    |        L  |  L     -  |  L   L    |
-    |  W      - | W  -      |     W     |    L   L  |
-    |    W  L   |     W  -  | W  -    - |      -    |
-    |  -        | -     -   |       -   |   W    -  |
-    |___________|___________|___________|___________|
-         |           |                       | 
-         Mc          Ec                     Lc
+          ___Host0___ ___Host1___ ___Host2___ ___Host3___
+         |   -  W    |        L  |  L     -  |  L   L    |
+         |  W      - | W  -      |     W     |    L   L  |
+INIT     |    W  L   |     W  -  | W  -    - |      -    |
+         |  -        | -     -   |       -   |   W    -  |
+         |___________|___________|___________|___________|
+              |           |                       | 
+             Mc          Ec                     Lc
     
-    Loop:
-        0) Define Mc, Ec, Lc
-        1) Moves first possible L from Mc to Ec
-        2) Moves first possible W from Lc to Mc
+          Loop:
+              0) Define Mc, Ec, Lc
+              1) Moves first possible L from Mc to Ec
+              2) Moves first possible W from Lc to Mc
 
-     ___Host0___ ___Host1___ ___Host2___ ___Host3___
-    |   -  W    |        L  |  L     -  |  L   L    |
-    |  W      - | W  L      |     W     |    L   L  |
-    |    W  -   |     W  -  | W  -    - |      -    |
-    |  W        | -     -   |       -   |   -    -  |
-    |___________|___________|___________|___________|
-         |            |           |
-         Mc          Lc           Ec
-
-     ___Host0___ ___Host1___ ___Host2___ ___Host3___
-    |   W  W    |        L  |  L     -  |  L   L    |
-    |  W      - | -  L      |     W     |    L   L  |
-    |    W  -   |     W  -  | W  -    - |      -    |
-    |  W        | -     -   |       -   |   -    -  |
-    |___________|___________|___________|___________|
-         |          |  |
-         Mc        Lc  Ec
-
-     ___Host0___ ___Host1___ ___Host2___ ___Host3___
-    |   W  W    |        L  |  L     -  |  L   L    |
-    |  W      - | -  L      |     W     |    L   L  |
-    |    W  W   |     -  -  | W  -    - |      -    |
-    |  W        | -     -   |       -   |   -    -  |
-    |___________|___________|___________|___________|
-         |           |            |
-         Mc          Ec          Lc
-         
-     ___Host0___ ___Host1___ ___Host2___ ___Host3___
-    |   W  W    |        L  |  L     -  |  L   L    |
-    |  W      W | -  L      |     W     |    L   L  |
-    |    W  W   |     -  -  | -  -    - |      -    |
-    |  W        | -     -   |       -   |   -    -  |
-    |___________|___________|___________|___________|
-         |           |            |
-         Mc          Ec          Lc
-         
-     __[FULL]___ ___Host1___ ___Host2___ ___Host3___
-    |   W  W    |        L  |  L     -  |  L   L    |
-    |  W      W | -  L      |     W     |    L   L  |
-    |    W  W   |     -  -  | -  -    - |      -    |
-    |  W        | -     -   |       -   |   -    -  |
-    |___________|___________|___________|___________|
-                      |         |    |
-                     Ec        Lc   Mc                  Lc == Mc -> END.
-
+           ___Host0___ ___Host1___ ___Host2___ ___Host3___
+          |   -  W    |        L  |  L     -  |  L   L    |
+          |  W      - | W  L      |     W     |    L   L  |
+1st LOOP  |    W  -   |     W  -  | W  -    - |      -    |
+          |  W        | -     -   |       -   |   -    -  |
+          |___________|___________|___________|___________|
+               |            |           |
+               Mc          Lc           Ec
+        
+           ___Host0___ ___Host1___ ___Host2___ ___Host3___
+          |   W  W    |        L  |  L     -  |  L   L    |
+          |  W      - | -  L      |     W     |    L   L  |
+2nd LOOP  |    W  -   |     W  -  | W  -    - |      -    |
+          |  W        | -     -   |       -   |   -    -  |
+          |___________|___________|___________|___________|
+               |          |  |
+               Mc        Lc  Ec
+        
+           ___Host0___ ___Host1___ ___Host2___ ___Host3___
+          |   W  W    |        L  |  L     -  |  L   L    |
+          |  W      - | -  L      |     W     |    L   L  |
+3rd LOOP  |    W  W   |     -  -  | W  -    - |      -    |
+          |  W        | -     -   |       -   |   -    -  |
+          |___________|___________|___________|___________|
+               |           |            |
+               Mc          Ec          Lc
+               
+           ___Host0___ ___Host1___ ___Host2___ ___Host3___
+          |   W  W    |        L  |  L     -  |  L   L    |
+          |  W      W | -  L      |     W     |    L   L  |
+4th LOOP  |    W  W   |     -  -  | -  -    - |      -    |
+          |  W        | -     -   |       -   |   -    -  |
+          |___________|___________|___________|___________|
+               |           |            |
+               Mc          Ec          Lc
+               
+           __[FULL]___ ___Host1___ ___Host2___ ___Host3___
+          |   W  W    |        L  |  L     -  |  L   L    |
+          |  W      W | -  L      |     W     |    L   L  |
+5th LOOP  |    W  W   |     -  -  | -  -    - |      -    |
+          |  W        | -     -   |       -   |   -    -  |
+          |___________|___________|___________|___________|
+                            |         |    |
+                           Ec        Lc   Mc                Lc == Mc -> END.
+    
 """
 
 from operator import attrgetter
