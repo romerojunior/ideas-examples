@@ -131,10 +131,10 @@ class InvalidHostList(Exception):
     pass
 
 
-class DestinationHostFull(Exception):
-    """Raised if the destination host doesn't have enough capacity"""
+class NotEnoughResources(Exception):
+    """Raised if the destination host doesn't have enough resources"""
     def __init__(self):
-        msg = "The destination host is full."
+        msg = "The destination host doesn't have enough resources."
         Exception.__init__(self, msg)
     pass
 
@@ -315,7 +315,7 @@ def migrate_vm(vm, src_host, dst_host):
         return True
     else:
         # adds warn log msg
-        raise DestinationHostFull
+        raise NotEnoughResources
 
 
 def is_linux(vm):
@@ -374,7 +374,7 @@ def segregate_cluster(host_list):
                 continue
             except SameSourceAndDestinationHost:
                 continue
-            except DestinationHostFull:
+            except NotEnoughResources:
                 continue
 
         # migrates the first possible Microsoft(R) Windows virtual machine from
@@ -393,7 +393,7 @@ def segregate_cluster(host_list):
             except SameSourceAndDestinationHost:
                 iterate = False
                 continue
-            except DestinationHostFull:
+            except NotEnoughResources:
                 continue
 
 
