@@ -112,6 +112,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 
 from operator import attrgetter
 from collections import deque
+from copy import deepcopy
 
 
 class OsType(object):
@@ -255,6 +256,9 @@ def remove_affinity_vms(host_list):
     :return: list with unsorted hosts without any affinity group machines.
     :rtype: deque
     """
+
+    # todo: this is a very bad idea! the instances of VM shouldn't be removed!
+
     for host in host_list:
         for vm in host.vms:
             if vm.has_affinity:
