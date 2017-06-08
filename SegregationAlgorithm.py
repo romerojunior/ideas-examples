@@ -32,7 +32,11 @@ Import considerations:
 
     * Each [FULL] host will ignored from iterations (no resources available);
     * Each virtual machine with a defined affinity group won't be migrated;
-      By default the VM property `has_affinity` is set to False.    
+    * Each virtual machine with a defined affinity group will be ignored from
+      the `Lc` (least amount of Microsoft(R) Windows) calculation.
+      
+-> The general behaviour is: Virtual machines with affinity are left untouched!
+   This might impact the algorithm negatively and should be re-evaluated.
 
 Example:
     
@@ -109,8 +113,14 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 from operator import attrgetter
 from collections import deque
 
-LINUX = 'LinuxVM'
-WIN = 'WindowsVM'
+
+class OsType(object):
+    """This class contains the definition of all possible template types"""
+
+    # todo: read different OS types from config file instead of cls attributes
+
+    LINUX = ['linux', 'debian', 'ubuntu']
+    WIN = ['windows', 'microsoft']
 
 
 class InvalidHostList(Exception):
@@ -146,44 +156,52 @@ class MigrateVMWithAffinity(Exception):
 
 
 class VM(object):
-    def __init__(self, vm_id, os_type):
+    def __init__(self, vm_id, vm_name=None, os_type=None, memory_required=None,
+                 affinity_group=None):
         self.vm_id = vm_id
+        self.vm_name = vm_name
         self.os_type = os_type
-
-    @property
-    def capacity_required(self):
-        """The amount of capacity required in a host to allocated this VM"""
-        return 1
+        self.memory_required = memory_required
+        self.affinity_group = affinity_group
 
     @property
     def has_affinity(self):
-        """Check if the virtual machine belongs to any affinity rule"""
-        return False
+        """Check if the virtual machine belongs to any affinity rule.
+        
+        :return: True if an affinity group is set, False otherwise.
+        :rtype: bool
+        """
+        return bool(self.affinity_group)
 
 
 class Host(object):
-    def __init__(self, host_id):
+    def __init__(self, host_id, host_name=None, memory_total=None,
+                 memory_used=None, memory_allocated=None):
         self.host_id = host_id
+        self.host_name = host_name
         self.vms = list()
-        self.capacity_total = 10
+        self.memory_total = memory_total
+        self.memory_used = memory_used
+        self.memory_allocated = memory_allocated
 
     def __eq__(self, other):
         """Method to compare instances of hosts by their hostname"""
         return self.host_id == other.host_id
 
     def __lt__(self, other):
-        """Method to handle sorting of hosts instances by available capacity"""
-        return self.capacity_available < other.capacity_available
+        """Method to handle sorting of hosts instances by available memory"""
+        return self.memory_free < other.memory_free
 
     @property
-    def capacity_available(self):
-        return self.capacity_total - len(self.vms)
+    def memory_free(self):
+        """Property method to define the amount of available memory"""
+        return self.memory_total - self.memory_allocated
 
     @property
     def amount_of_windows_vms(self):
         counter = 0
         for vm in self.vms:
-            if vm.os_type == WIN:
+            if vm.os_type in OsType.WIN:
                 counter += 1
         return counter
 
@@ -215,7 +233,7 @@ def most_windows_stack(host_list, filter_full=True):
     _most_win = deque()
 
     for _host in host_list:
-        if not _host.capacity_available <= 0:
+        if not _host.memory_free <= 0:
             _most_win.append(_host)
 
     if filter_full:
@@ -228,11 +246,29 @@ def most_windows_stack(host_list, filter_full=True):
                             reverse=True))
 
 
+def remove_affinity_vms(host_list):
+    """ Removes all virtual machines with a defined affinity group, useful as
+    as filter for determining the host with the least amount of Microsoft(R)
+    Windows virtual machines within a group of hosts.
+
+    :param host_list: list containing all hosts to analyze
+    :return: list with unsorted hosts without any affinity group machines.
+    :rtype: deque
+    """
+    for host in host_list:
+        for vm in host.vms:
+            if vm.has_affinity:
+                host.vms.remove(vm)
+
+    return deque(host_list)
+
+
 def least_windows_stack(host_list):
     """ Compare all hosts within a list of hosts and returns a sorted list, the
     first element being the host with the least amount of Microsoft(R) Windows 
     virtual machines. Hosts without any Microsoft(R) Windows virtual machines
-    will be ignored.
+    will be ignored. Microsoft(R) Windows virtual machines with affinity group
+    won't be taken into account since they can't be migrated.
 
     :param host_list: list containing all hosts to analyze
     :return: list with sorted hosts, hosts with greatest amount of Microsoft(R)
@@ -242,7 +278,7 @@ def least_windows_stack(host_list):
 
     _least_win = deque()
 
-    for _host in host_list:
+    for _host in remove_affinity_vms(host_list):
         if _host.amount_of_windows_vms > 0:
             _least_win.append(_host)
 
@@ -266,16 +302,16 @@ def migrate_vm(vm, src_host, dst_host):
         # migration is not needed nor possible
         # add warn log message
         raise SameSourceAndDestinationHost
-    if dst_host.capacity_available >= vm.capacity_required:
+    if dst_host.memory_free >= vm.memory_required:
         # migrates virtual machine, implementation based on cosmic API
         # eventually this needs to be inside a try-except block
         src_host.vms.remove(vm)
         dst_host.vms.append(vm)
         # adds info log msg (slack?) if migration actually happens
-        print("\t\tM > Migrated %s (%s) from %s to %s" % (vm.vm_id,
+        print("\t\tM > Migrated %s (%s) from %s to %s" % (vm.vm_name,
                                                           vm.os_type,
-                                                          src_host.host_id,
-                                                          dst_host.host_id))
+                                                          src_host.host_name,
+                                                          dst_host.host_name))
         return True
     else:
         # adds warn log msg
@@ -290,7 +326,7 @@ def is_linux(vm):
     :return: True if the virtual machine OS type is Linux-like, False otherwise
     :rtype: bool
     """
-    return True if vm.os_type == LINUX else False
+    return True if vm.os_type in OsType.LINUX else False
 
 
 def is_windows(vm):
@@ -301,7 +337,7 @@ def is_windows(vm):
     :return: True if the virtual machine OS type is Linux-like, False otherwise
     :rtype: bool
     """
-    return True if vm.os_type == WIN else False
+    return True if vm.os_type in OsType.WIN else False
 
 
 def segregate_cluster(host_list):
@@ -362,95 +398,4 @@ def segregate_cluster(host_list):
 
 
 if __name__ == "__main__":
-
-    # mocking:
-
-    host0 = Host('host0')
-    host1 = Host('host1')
-    host2 = Host('host2')
-    host3 = Host('host3')
-    host4 = Host('host4')
-    host5 = Host('host5')
-    host6 = Host('host6')
-    host7 = Host('host7')
-
-    host0.vms.append(VM('vm-1', WIN))
-    host0.vms.append(VM('vm-2', LINUX))
-    host0.vms.append(VM('vm-3', LINUX))
-    host0.vms.append(VM('vm-4', LINUX))
-    host0.vms.append(VM('vm-5', LINUX))
-    host0.vms.append(VM('vm-6', WIN))
-    host0.vms.append(VM('vm-7', LINUX))
-    host0.vms.append(VM('vm-8', WIN))
-    host0.vms.append(VM('vm-9', WIN))
-
-    host1.vms.append(VM('vm-10', WIN))
-    host1.vms.append(VM('vm-11', WIN))
-    host1.vms.append(VM('vm-12', LINUX))
-    host1.vms.append(VM('vm-13', LINUX))
-    host1.vms.append(VM('vm-14', WIN))
-    host1.vms.append(VM('vm-15', LINUX))
-    host1.vms.append(VM('vm-16', LINUX))
-    host1.vms.append(VM('vm-17', WIN))
-
-    host2.vms.append(VM('vm-18', WIN))
-    host2.vms.append(VM('vm-19', WIN))
-    host2.vms.append(VM('vm-20', WIN))
-    host2.vms.append(VM('vm-21', LINUX))
-    host2.vms.append(VM('vm-22', LINUX))
-    host2.vms.append(VM('vm-23', LINUX))
-
-    host3.vms.append(VM('vm-24', WIN))
-    host3.vms.append(VM('vm-25', WIN))
-    host3.vms.append(VM('vm-26', WIN))
-    host3.vms.append(VM('vm-27', WIN))
-    host3.vms.append(VM('vm-28', LINUX))
-    host3.vms.append(VM('vm-29', LINUX))
-    host3.vms.append(VM('vm-30', WIN))
-    host3.vms.append(VM('vm-31', LINUX))
-
-    host4.vms.append(VM('vm-32', WIN))
-    host4.vms.append(VM('vm-33', WIN))
-    host4.vms.append(VM('vm-34', WIN))
-    host4.vms.append(VM('vm-35', WIN))
-    host4.vms.append(VM('vm-36', WIN))
-    host4.vms.append(VM('vm-37', LINUX))
-    host4.vms.append(VM('vm-38', WIN))
-    host4.vms.append(VM('vm-39', LINUX))
-
-    host5.vms.append(VM('vm-40', WIN))
-    host5.vms.append(VM('vm-41', LINUX))
-    host5.vms.append(VM('vm-42', LINUX))
-    host5.vms.append(VM('vm-43', WIN))
-    host5.vms.append(VM('vm-44', WIN))
-    host5.vms.append(VM('vm-45', LINUX))
-    host5.vms.append(VM('vm-46', WIN))
-    host5.vms.append(VM('vm-47', LINUX))
-
-    host6.vms.append(VM('vm-48', LINUX))
-    host6.vms.append(VM('vm-49', WIN))
-    host6.vms.append(VM('vm-50', LINUX))
-    host6.vms.append(VM('vm-51', WIN))
-    host6.vms.append(VM('vm-52', LINUX))
-    host6.vms.append(VM('vm-53', LINUX))
-    host6.vms.append(VM('vm-54', WIN))
-    host6.vms.append(VM('vm-55', LINUX))
-
-    host7.vms.append(VM('vm-56', WIN))
-    host7.vms.append(VM('vm-57', LINUX))
-    host7.vms.append(VM('vm-58', WIN))
-    host7.vms.append(VM('vm-59', LINUX))
-    host7.vms.append(VM('vm-60', WIN))
-    host7.vms.append(VM('vm-61', LINUX))
-    host7.vms.append(VM('vm-62', WIN))
-    host7.vms.append(VM('vm-63', LINUX))
-
-    cluster = [host0, host1, host2, host3, host4, host5, host6, host7]
-
-    segregate_cluster(host_list=cluster)
-
-    print
-    for host in cluster:
-        for virtual_machine in host.vms:
-            print host.host_id, virtual_machine.vm_id, virtual_machine.os_type
-        print
+    pass
