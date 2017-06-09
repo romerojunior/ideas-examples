@@ -30,13 +30,11 @@ tation is based on a ranking algorithms.
 
 Import considerations:
 
-    * Each [FULL] host will ignored from iterations (no resources available);
+    * Each dedicated host will be ignored;
+    * Each host without enough resources will be ignored;
     * Each virtual machine with a defined affinity group won't be migrated;
     * Each virtual machine with a defined affinity group will be ignored from
       the `Lc` (least amount of Microsoft(R) Windows) calculation.
-      
--> The general behaviour is: Virtual machines with affinity are left untouched!
-   This might impact the algorithm negatively and should be re-evaluated.
 
 Example:
     
@@ -110,8 +108,8 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 
 """
 
-from operator import methodcaller
 from collections import deque
+from operator import methodcaller, attrgetter
 
 
 class OsType(object):
@@ -176,13 +174,14 @@ class VM(object):
 
 class Host(object):
     def __init__(self, host_id, host_name=None, memory_total=None,
-                 memory_used=None, memory_allocated=None):
+                 memory_used=None, memory_allocated=None, dedicated=False):
         self.host_id = host_id
         self.host_name = host_name
         self.vms = list()
         self.memory_total = memory_total
         self.memory_used = memory_used
         self.memory_allocated = memory_allocated
+        self.dedicated = dedicated
 
     def __eq__(self, other):
         """Method to compare instances of hosts by their hostname"""
@@ -219,7 +218,13 @@ def most_empty_stack(host_list):
     :return: list with sorted hosts, hosts with the emptiest space comes first
     :rtype: deque
     """
-    return deque(sorted(host_list, reverse=True))
+
+    _most_empty = deque()
+
+    for _host in filter(lambda h: not is_dedicated(h), host_list):
+        _most_empty.append(_host)
+
+    return sorted(host_list, key=attrgetter('memory_free'), reverse=True)
 
 
 def most_windows_stack(host_list, filter_full=True):
@@ -237,7 +242,7 @@ def most_windows_stack(host_list, filter_full=True):
 
     _most_win = deque()
 
-    for _host in host_list:
+    for _host in filter(lambda h: not is_dedicated(h), host_list):
         if not _host.memory_free <= 0:
             _most_win.append(_host)
 
@@ -266,7 +271,7 @@ def least_windows_stack(host_list):
 
     _least_win = deque()
 
-    for _host in host_list:
+    for _host in filter(lambda h: not is_dedicated(h), host_list):
         if _host.amount_of_windows_vms(filter_affinity=True) > 0:
             _least_win.append(_host)
 
@@ -304,6 +309,16 @@ def migrate_vm(vm, src_host, dst_host):
     else:
         # adds warn log msg
         raise NotEnoughResources
+
+
+def is_dedicated(host):
+    """ Verifies if the instance of Host is dedicated. Useful as a filter.
+
+    :param host: a virtual machine to be analyzed
+    :return: True if instance is dedicated, False otherwise
+    :rtype: bool
+    """
+    return True if host.dedicated else False
 
 
 def is_linux(vm):
