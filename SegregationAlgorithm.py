@@ -110,9 +110,8 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 
 """
 
-from operator import attrgetter
+from operator import methodcaller
 from collections import deque
-from copy import deepcopy
 
 
 class OsType(object):
@@ -195,14 +194,19 @@ class Host(object):
 
     @property
     def memory_free(self):
-        """Property method to define the amount of available memory"""
+        """Property to define the amount of available memory"""
         return self.memory_total - self.memory_allocated
 
-    @property
-    def amount_of_windows_vms(self):
+    def amount_of_windows_vms(self, filter_affinity=False):
+        """Property to define the amount of Microsoft(R) Windows machines 
+        running in the instance of Host, filtering virtual machines with
+        affinity group if flagged to do so."""
         counter = 0
-        for vm in self.vms:
-            if vm.os_type in OsType.WIN:
+        for vm in filter(is_windows, self.vms):
+            if filter_affinity:
+                if not vm.has_affinity:
+                    counter += 1
+            else:
                 counter += 1
         return counter
 
@@ -239,32 +243,12 @@ def most_windows_stack(host_list, filter_full=True):
 
     if filter_full:
         return sorted(_most_win,
-                      key=attrgetter('amount_of_windows_vms'),
+                      key=methodcaller('amount_of_windows_vms'),
                       reverse=True)
     else:
         return deque(sorted(host_list,
-                            key=attrgetter('amount_of_windows_vms'),
+                            key=methodcaller('amount_of_windows_vms'),
                             reverse=True))
-
-
-def remove_affinity_vms(host_list):
-    """ Removes all virtual machines with a defined affinity group, useful as
-    as filter for determining the host with the least amount of Microsoft(R)
-    Windows virtual machines within a group of hosts.
-
-    :param host_list: list containing all hosts to analyze
-    :return: list with unsorted hosts without any affinity group machines.
-    :rtype: deque
-    """
-
-    # todo: this is a very bad idea! the instances of VM shouldn't be removed!
-
-    for host in host_list:
-        for vm in host.vms:
-            if vm.has_affinity:
-                host.vms.remove(vm)
-
-    return deque(host_list)
 
 
 def least_windows_stack(host_list):
@@ -282,11 +266,11 @@ def least_windows_stack(host_list):
 
     _least_win = deque()
 
-    for _host in remove_affinity_vms(host_list):
-        if _host.amount_of_windows_vms > 0:
+    for _host in host_list:
+        if _host.amount_of_windows_vms(filter_affinity=True) > 0:
             _least_win.append(_host)
 
-    return sorted(_least_win, key=attrgetter('amount_of_windows_vms'))
+    return sorted(_least_win, key=methodcaller('amount_of_windows_vms', True))
 
 
 def migrate_vm(vm, src_host, dst_host):
