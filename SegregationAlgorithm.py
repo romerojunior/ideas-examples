@@ -40,7 +40,7 @@ Import considerations:
 
 Example:
     
-    4 hosts cluster:
+    4 hosts cluster with any affinity group applied:
     
     Mc: Host with the greatest amount of Microsoft(R) Windows virtual machines
     Lc: Host with the least amount of Microsoft(R) Windows virtual machines
