@@ -118,15 +118,6 @@ import urllib
 import json
 
 
-class OsType(object):
-    """This class contains the definition of all possible template types"""
-
-    # todo: read different OS types from config file instead of cls attributes
-
-    LINUX = ['linux', 'debian', 'ubuntu']
-    WIN = ['windows', 'microsoft']
-
-
 class InvalidHostList(Exception):
     """Raised if the segregation algorithm receives an invalid list of hosts"""
     def __init__(self):
@@ -161,11 +152,11 @@ class MigrateVMWithAffinity(Exception):
 
 class VM(object):
 
-    def __init__(self, vm_id, vm_name=None, os_type=None, memory_required=None,
+    def __init__(self, vm_id, vm_name=None, os_template=None, memory_required=None,
                  affinity_group=None):
         self.vm_id = vm_id
         self.vm_name = vm_name
-        self.os_type = os_type
+        self.os_template = os_template
         self.memory_required = memory_required
         self.affinity_group = affinity_group
 
@@ -179,21 +170,10 @@ class VM(object):
         return bool(self.affinity_group)
 
     @staticmethod
-    def is_linux(vm):
-        """ Verifies if the OS type for a given virtual machine is Linux. 
-        This static method is particularly useful as a filter.
-    
-        :param vm: Virtual machine to verify
-        :type vm: VM
-        :return: True if the VM OS type is Linux-like, False otherwise
-        :rtype: bool
-        """
-        return True if vm.os_type in OsType.LINUX else False
-
-    @staticmethod
     def is_windows(vm):
-        """ Verifies if the OS type for a given VM is Microsoft(R) Windows. 
-        This static method is particularly useful as a filter.
+        """ Verifies if the OS template for a given VM is Microsoft(R) Windows. 
+        This static method is particularly useful as a filter. A lambda 
+        function can be used to invert the result finding only linux VMs.
     
         :param vm: Virtual machine to verify
         :type vm: VM
@@ -201,7 +181,7 @@ class VM(object):
          False otherwise
         :rtype: bool
         """
-        return True if vm.os_type in OsType.WIN else False
+        return True if vm.os_template.lower().startswith('win') else False
 
 
 class Host(object):
@@ -284,7 +264,7 @@ class SegregationManager(object):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
         # minimum amount of memory per host before considering it full (bytes):
-        self.min_memory_per_host = 536870912
+        self.min_memory_per_host = 1024*1024*1024
 
     def most_empty_stack(self, host_list):
         """ Compare all hosts within a list of hosts and returns a sorted list, 
@@ -400,15 +380,26 @@ class SegregationManager(object):
             src_host.remove_vm(vm)
             dst_host.append_vm(vm)
 
-            if not self.dry_run:
+            if self.dry_run:
+                print("\t\t>>> Would migrate %s (%s) from %s to %s" %
+                      (vm.vm_name,
+                       vm.os_template,
+                       src_host.host_name,
+                       dst_host.host_name))
+            else:
+                if self.ias_handler.migrate_vm(vm, src_host, dst_host):
+                    print("\t\t>>> Migrated %s (%s) from %s to %s" %
+                          (vm.vm_name,
+                           vm.os_template,
+                           src_host.host_name,
+                           dst_host.host_name))
+                else:
+                    print("\t\t>>> Error migrating %s (%s) from %s to %s" %
+                          (vm.vm_name,
+                           vm.os_template,
+                           src_host.host_name,
+                           dst_host.host_name))
 
-                self.ias_handler.migrate_vm(vm, src_host, dst_host)
-
-            print("\t\tM > Migrated %s (%s) from %s to %s" %
-                  (vm.vm_name,
-                   vm.os_type,
-                   src_host.host_name,
-                   dst_host.host_name))
             return True
         else:
             raise NotEnoughResources
@@ -437,9 +428,8 @@ class SegregationManager(object):
             # migrates the first possible Linux virtual machine from the host
             # with the greatest amount of Microsoft(R) Windows virtual machines
             # to the host with the largest amount of unallocated resources.
-            for linux_vm in filter(VM.is_linux,
+            for linux_vm in filter(lambda vm: not VM.is_windows(vm),
                                    most_windows_host_lst[0].vms):
-
                 try:
                     self.migrate_vm(vm=linux_vm,
                                     src_host=most_windows_host_lst[0],
@@ -458,7 +448,6 @@ class SegregationManager(object):
             # Microsoft(R) Windows virtual machines.
             for windows_vm in filter(VM.is_windows,
                                      least_windows_host_lst[0].vms):
-
                 try:
                     self.migrate_vm(vm=windows_vm,
                                     src_host=least_windows_host_lst[0],
@@ -544,9 +533,22 @@ class CloudStack(SignedAPICall):
         :rtype str
         """
         request = {'virtualmachineid': vm.vm_id, 'hostid': dst_host.host_id}
+
+        # start async api call:
         result = self.migrateVirtualMachine(request)
-        sleep(10)
-        return result['jobid']
+
+        async_job = {'jobid': result['jobid']}
+
+        while True:
+            result_async = self.queryAsyncJobResult(async_job)
+            # 0 - pending; 1 - success; 2 - error
+
+            if result_async['jobstatus'] == 0:
+                sleep(3)
+            elif result_async['jobstatus'] == 1:
+                return True
+            elif result_async['jobstatus'] == 2:
+                return False
 
     def gather_host_list(self, cluster_id):
         """ Main algorithm (procedure) for segregating virtual machines, refer 
@@ -583,7 +585,7 @@ class CloudStack(SignedAPICall):
 
                     virtual_machine = VM(vm_id=vm['id'],
                                          vm_name=vm['name'],
-                                         os_type=vm['templatename'],
+                                         os_template=vm['templatename'],
                                          affinity_group=vm['affinitygroup'],
                                          memory_required=memory_bytes)
 
