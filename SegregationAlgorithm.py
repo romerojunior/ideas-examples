@@ -110,6 +110,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 
 from collections import deque
 from operator import methodcaller, attrgetter
+from time import sleep
 import hashlib
 import hmac
 import base64
@@ -228,8 +229,35 @@ class Host(object):
         """Property to define the amount of available memory"""
         return self.memory_total - self.memory_allocated
 
+    @property
+    def amount_of_vms(self):
+        """Property to define the amount of virtual machines"""
+        return len(self.vms)
+
+    def append_vm(self, vm):
+        """ Appends a virtual machine to a host taking into account the amount
+        of resources required for such.
+    
+        :param vm: Instance of VM
+        :type vm: VM
+        """
+        self.memory_allocated += vm.memory_required
+        self.vms.append(vm)
+        return
+
+    def remove_vm(self, vm):
+        """ Removes a virtual machine to a host taking into account the amount
+        of resources required for such.
+    
+        :param vm: Instance of VM
+        :type vm: VM
+        """
+        self.memory_allocated -= vm.memory_required
+        self.vms.remove(vm)
+        return
+
     def amount_of_windows_vms(self, filter_affinity=False):
-        """Property to define the amount of Microsoft(R) Windows machines 
+        """ Method to define the amount of Microsoft(R) Windows machines 
         running in the instance of Host, filtering virtual machines with
         affinity group if flagged to do so."""
         counter = 0
@@ -255,11 +283,14 @@ class SegregationManager(object):
     def __init__(self, ias_handler=None, dry_run=False):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
+        # minimum amount of memory per host before considering it full (bytes):
+        self.min_memory_per_host = 536870912
 
     def most_empty_stack(self, host_list):
         """ Compare all hosts within a list of hosts and returns a sorted list, 
         the first element being the host with the highest amount of resources
-        available.
+        available, if the amount of available memory is the same, the tie 
+        breaker will be amount of running virtual machines.
     
         :param host_list: list containing all hosts to analyze
         :type host_list: deque
@@ -268,12 +299,28 @@ class SegregationManager(object):
         :rtype: deque
         """
 
-        _most_empty = deque()
+        tmp_a = list()
+        tmp_b = list()
+        result = list()
 
-        for _host in filter(lambda h: not h.is_dedicated(), host_list):
-            _most_empty.append(_host)
+        for i in host_list:
+            for n in host_list:
+                if n == i:
+                    tmp_b.append(n)
+                    tmp_a = sorted(tmp_b,
+                                   key=attrgetter('memory_free'),
+                                   reverse=True)
+                else:
+                    if n.memory_free == i.memory_free:
+                        tmp_b.append(n)
+                    tmp_a = sorted(tmp_b,
+                                   key=attrgetter('amount_of_vms'))
 
-        return sorted(host_list, key=attrgetter('memory_free'), reverse=True)
+        for i in tmp_a:
+            if i not in result:
+                result.append(i)
+
+        return result
 
     def most_windows_stack(self, host_list, filter_full=True):
         """ Compare all hosts within a list of hosts and returns a sorted list,
@@ -293,7 +340,7 @@ class SegregationManager(object):
         _most_win = deque()
 
         for _host in filter(lambda h: not h.is_dedicated(), host_list):
-            if not _host.memory_free <= 0:
+            if not _host.memory_free <= self.min_memory_per_host:
                 _most_win.append(_host)
 
         if filter_full:
@@ -350,11 +397,11 @@ class SegregationManager(object):
             raise SameSourceAndDestinationHost
         if dst_host.memory_free >= vm.memory_required:
 
-            src_host.vms.remove(vm)
-            dst_host.vms.append(vm)
+            src_host.remove_vm(vm)
+            dst_host.append_vm(vm)
 
             if not self.dry_run:
-                
+
                 self.ias_handler.migrate_vm(vm, src_host, dst_host)
 
             print("\t\tM > Migrated %s (%s) from %s to %s" %
@@ -364,7 +411,6 @@ class SegregationManager(object):
                    dst_host.host_name))
             return True
         else:
-            # adds warn log msg
             raise NotEnoughResources
 
     def segregate_cluster(self, host_list):
@@ -499,6 +545,7 @@ class CloudStack(SignedAPICall):
         """
         request = {'virtualmachineid': vm.vm_id, 'hostid': dst_host.host_id}
         result = self.migrateVirtualMachine(request)
+        sleep(10)
         return result['jobid']
 
     def gather_host_list(self, cluster_id):
@@ -528,7 +575,6 @@ class CloudStack(SignedAPICall):
 
             vm_list = self.listVirtualMachines({'hostid': h.host_id,
                                                 'listall': 'true'})
-
             if vm_list:
 
                 for vm in vm_list['virtualmachine']:
