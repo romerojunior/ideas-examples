@@ -108,6 +108,7 @@ INIT     |    W  L   |     W  -  | W  -    - |      -    |
 
 """
 
+from copy import copy
 from collections import deque
 from operator import methodcaller, attrgetter
 from time import sleep
@@ -152,13 +153,17 @@ class MigrateVMWithAffinity(Exception):
 
 class VM(object):
 
-    def __init__(self, vm_id, vm_name=None, os_template=None, memory_required=None,
-                 affinity_group=None):
+    def __init__(self, vm_id, vm_name=None, os_template=None,
+                 memory_required=None, affinity_group=None):
         self.vm_id = vm_id
         self.vm_name = vm_name
         self.os_template = os_template
         self.memory_required = memory_required
         self.affinity_group = affinity_group
+
+    def __lt__(self, other):
+        """Method to handle sorting of VM instances by the amount of memory"""
+        return self.memory_required < other.memory_required
 
     @property
     def has_affinity(self):
@@ -214,6 +219,13 @@ class Host(object):
         """Property to define the amount of virtual machines"""
         return len(self.vms)
 
+    @property
+    def is_full(self):
+        if self.memory_free > (512*1024*1024):
+            return False
+        else:
+            return True
+
     def append_vm(self, vm):
         """ Appends a virtual machine to a host taking into account the amount
         of resources required for such.
@@ -249,6 +261,18 @@ class Host(object):
                 counter += 1
         return counter
 
+    def amount_of_affinity_vms(self):
+        """ Counts the amount of virtual machines with affinity group.
+
+        :return: Counter with the amount of VMs with affinity group set
+        :rtype: int
+        """
+        counter = 0
+        for vm in self.vms:
+            if vm.has_affinity:
+                counter += 1
+        return counter
+
     def is_dedicated(self):
         """ Verifies if the instance of Host is dedicated. Useful as a filter.
     
@@ -257,6 +281,14 @@ class Host(object):
         """
         return True if self.dedicated else False
 
+    def is_empty(self):
+        """ Verifies if the host is empty.
+
+        :return: True host is empty, otherwise False.
+        :rtype: bool
+        """
+        return True if self.vms else False
+
 
 class SegregationManager(object):
 
@@ -264,7 +296,7 @@ class SegregationManager(object):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
         # minimum amount of memory per host before considering it full (bytes):
-        self.min_memory_per_host = 1024*1024*1024
+        self.min_memory_per_host = 8*1024*1024*1024
 
     def most_empty_stack(self, host_list):
         """ Compare all hosts within a list of hosts and returns a sorted list, 
@@ -317,14 +349,17 @@ class SegregationManager(object):
         :rtype: deque
         """
 
-        _most_win = deque()
+        most_win_dq = deque()
 
-        for _host in filter(lambda h: not h.is_dedicated(), host_list):
-            if not _host.memory_free <= self.min_memory_per_host:
-                _most_win.append(_host)
+        for host in filter(lambda h: not h.is_dedicated(), host_list):
+            # only non-dedicated hosts
+            if host.memory_free >= self.min_memory_per_host:
+                # only hosts with enough memory
+                most_win_dq.append(host)
 
         if filter_full:
-            return sorted(_most_win,
+            # by default returns only hosts with enough memory
+            return sorted(most_win_dq,
                           key=methodcaller('amount_of_windows_vms'),
                           reverse=True)
         else:
@@ -346,13 +381,15 @@ class SegregationManager(object):
         :rtype: deque
         """
 
-        _least_win = deque()
+        least_win_dq = deque()
 
-        for _host in filter(lambda h: not h.is_dedicated(), host_list):
-            if _host.amount_of_windows_vms(filter_affinity=True) > 0:
-                _least_win.append(_host)
+        for host in filter(lambda h: not h.is_dedicated(), host_list):
+            # only non-dedicated hosts
+            if host.amount_of_windows_vms(filter_affinity=True) > 0:
+                # only non-affinity windows vms are counted
+                least_win_dq.append(host)
 
-        return sorted(_least_win,
+        return sorted(least_win_dq,
                       key=methodcaller('amount_of_windows_vms', True))
 
     def migrate_vm(self, vm, src_host, dst_host):
@@ -402,7 +439,64 @@ class SegregationManager(object):
 
             return True
         else:
+            print "\t\t[DEBUG] - VM: %s \t MEM_REQ: %sMB \t HOST_FREE_MEM: %sMB \t HOST: %s" % (
+                vm.vm_name, vm.memory_required/1024/1024, dst_host.memory_free/1024/1024, dst_host.host_name
+            )
             raise NotEnoughResources
+
+    def prepare_emptiest_host(self, host_list):
+        """testing new algorithm"""
+
+        most_empty_host_lst = self.most_empty_stack(host_list)
+
+        # gather linux vm from the most empty host:
+        for vm in sorted(filter(lambda x: not VM.is_windows(x),
+                         most_empty_host_lst[0].vms)):
+
+            for dst_host in most_empty_host_lst[1:]:
+                try:
+                    # tries to migrate to the 2nd emptiest host
+                    self.migrate_vm(vm=vm,
+                                    dst_host=dst_host,
+                                    src_host=most_empty_host_lst[0])
+                    break
+
+                except NotEnoughResources:
+                    print "foo"
+                    # goes to the next emptiest host (3rd, 4th, etc)
+                    continue
+
+        print "\t[DEBUG] Emptiest host is now ready (%s)!" \
+              % most_empty_host_lst[0].host_name
+
+    def magic(self, host_list):
+        """testing new algorithm"""
+
+        hl_cp = copy(host_list)
+
+        self.prepare_emptiest_host(hl_cp)
+
+        emptiest_host = self.most_empty_stack(hl_cp)[0]
+        remaining_hosts = self.most_empty_stack(hl_cp)[1:]
+
+        for src_host in self.least_windows_stack(remaining_hosts):
+            # get smallest vms from remaining least windows hosts:
+            for vm in sorted(filter(VM.is_windows, src_host.vms)):
+                try:
+                    self.migrate_vm(vm=vm,
+                                    src_host=src_host,
+                                    dst_host=emptiest_host)
+                    continue
+                except MigrateVMWithAffinity:
+                    # affinity! go to the next vm
+                    continue
+                except NotEnoughResources:
+                    try:
+                        hl_cp.remove(emptiest_host)
+                    except ValueError:
+                        return
+                    self.magic(hl_cp)
+                    pass
 
     def segregate_cluster(self, host_list):
         """ Main algorithm (procedure) for segregating virtual machines, refer 
@@ -413,8 +507,8 @@ class SegregationManager(object):
         """
 
         # checks if the list of hosts is valid:
-        for _host in host_list:
-            if not isinstance(_host, Host):
+        for host in host_list:
+            if not isinstance(host, Host):
                 raise InvalidHostList
 
         iterate = True
@@ -423,7 +517,6 @@ class SegregationManager(object):
 
             most_windows_host_lst = self.most_windows_stack(host_list)
             most_empty_host_lst = self.most_empty_stack(host_list)
-            least_windows_host_lst = self.least_windows_stack(host_list)
 
             # migrates the first possible Linux virtual machine from the host
             # with the greatest amount of Microsoft(R) Windows virtual machines
@@ -436,30 +529,41 @@ class SegregationManager(object):
                                     dst_host=most_empty_host_lst[0])
                     break
                 except MigrateVMWithAffinity:
+                    print "\t[DEBUG] - A - MigrateVMWithAffinity"
                     continue
                 except SameSourceAndDestinationHost:
+                    print "\t[DEBUG] - A - SameSourceAndDestinationHost"
                     continue
                 except NotEnoughResources:
+                    print "\t[DEBUG] - A - NotEnoughResources"
                     continue
 
-            # migrates the first possible Microsoft(R) Windows virtual machine
+            least_windows_host_lst = self.least_windows_stack(host_list)
+
+            # migrates the smallest Microsoft(R) Windows virtual machine
             # from the host with the least amount of Microsoft(R) Windows
             # virtual machines to the host with the greatest amount of
             # Microsoft(R) Windows virtual machines.
-            for windows_vm in filter(VM.is_windows,
-                                     least_windows_host_lst[0].vms):
-                try:
-                    self.migrate_vm(vm=windows_vm,
-                                    src_host=least_windows_host_lst[0],
-                                    dst_host=most_windows_host_lst[0])
-                    break
-                except MigrateVMWithAffinity:
-                    continue
-                except SameSourceAndDestinationHost:
-                    iterate = False
-                    continue
-                except NotEnoughResources:
-                    continue
+            for windows_vm in sorted(filter(VM.is_windows,
+                                     least_windows_host_lst[0].vms)):
+
+                for most_windows_host in most_windows_host_lst:
+
+                    try:
+                        self.migrate_vm(vm=windows_vm,
+                                        src_host=least_windows_host_lst[0],
+                                        dst_host=most_windows_host)
+                        break
+                    except MigrateVMWithAffinity:
+                        print "\t[DEBUG] - B - MigrateVMWithAffinity"
+                        break
+                    except SameSourceAndDestinationHost:
+                        print "\t[DEBUG] - B - SameSourceAndDestinationHost"
+                        iterate = False
+                        break
+                    except NotEnoughResources:
+                        print "\t[DEBUG] - B - NotEnoughResources"
+                        continue
 
 
 class SignedAPICall(object):
@@ -499,7 +603,10 @@ class SignedAPICall(object):
 
 
 class CloudStack(SignedAPICall):
-
+    """
+    Every Cloudstack API request has the format: 
+    Base URL + API Path + Command String + Signature
+    """
     def __getattr__(self, name):
         def handler_function(*args, **kwargs):
             if kwargs:
