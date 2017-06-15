@@ -416,6 +416,8 @@ class SegregationManager(object):
                     continue
                 except SameSourceAndDestinationHost:
                     continue
+                except MigrateVMWithAffinity:
+                    continue
 
     def segregate_cluster(self, host_list):
         """ Recursive method to segregate an arbitrary list of Host instances.
