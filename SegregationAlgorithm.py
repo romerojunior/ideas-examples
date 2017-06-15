@@ -35,76 +35,20 @@ Import considerations:
     * Each virtual machine with a defined affinity group won't be migrated;
     * Each virtual machine with a defined affinity group will be ignored from
       the `Lc` (least amount of Microsoft(R) Windows) calculation.
-
-Example:
-    
-    4 hosts cluster without any affinity group applied:
-    
-    Mc: Host with the greatest amount of Microsoft(R) Windows virtual machines
-    Lc: Host with the least amount of Microsoft(R) Windows virtual machines
-    Ec: Host with the largest amount of unallocated resources
-    W:  Microsoft(R) Windows virtual machine
-    L:  Linux virtual machine
-    -:  Unallocated resource
       
-          ___Host0___ ___Host1___ ___Host2___ ___Host3___
-         |   -  W    |        L  |  L     -  |  L   L    |
-         |  W      - | W  -      |     W     |    L   L  |
-INIT     |    W  L   |     W  -  | W  -    - |      -    |
-         |  -        | -     -   |       -   |   W    -  |
-         |___________|___________|___________|___________|
-              |           |                       | 
-             Mc          Ec                      Lc
-    
-          Loop:
-              0) Define Mc, Ec, Lc
-              1) Moves first possible L from Mc to Ec
-              2) Moves first possible W from Lc to Mc
+How does it work?
 
-           ___Host0___ ___Host1___ ___Host2___ ___Host3___
-          |   -  W    |        L  |  L     -  |  L   L    |
-          |  W      - | W  L      |     W     |    L   L  |
-1st LOOP  |    W  -   |     W  -  | W  -    - |      -    |
-          |  W        | -     -   |       -   |   -    -  |
-          |___________|___________|___________|___________|
-               |            |           |
-               Mc          Lc           Ec
-
-           ___Host0___ ___Host1___ ___Host2___ ___Host3___
-          |   W  W    |        L  |  L     -  |  L   L    |
-          |  W      - | -  L      |     W     |    L   L  |
-2nd LOOP  |    W  -   |     W  -  | W  -    - |      -    |
-          |  W        | -     -   |       -   |   -    -  |
-          |___________|___________|___________|___________|
-               |          |  |
-               Mc        Lc  Ec
-
-           ___Host0___ ___Host1___ ___Host2___ ___Host3___
-          |   W  W    |        L  |  L     -  |  L   L    |
-          |  W      - | -  L      |     W     |    L   L  |
-3rd LOOP  |    W  W   |     -  -  | W  -    - |      -    |
-          |  W        | -     -   |       -   |   -    -  |
-          |___________|___________|___________|___________|
-               |           |            |
-               Mc          Ec          Lc
-
-           ___Host0___ ___Host1___ ___Host2___ ___Host3___
-          |   W  W    |        L  |  L     -  |  L   L    |
-          |  W      W | -  L      |     W     |    L   L  |
-4th LOOP  |    W  W   |     -  -  | -  -    - |      -    |
-          |  W        | -     -   |       -   |   -    -  |
-          |___________|___________|___________|___________|
-               |           |            |
-               Mc          Ec          Lc
-
-           __[FULL]___ ___Host1___ ___Host2___ ___Host3___
-          |   W  W    |        L  |  L     -  |  L   L    |
-          |  W      W | -  L      |     W     |    L   L  |
-5th LOOP  |    W  W   |     -  -  | -  -    - |      -    |
-          |  W        | -     -   |       -   |   -    -  |
-          |___________|___________|___________|___________|
-                            |         |    |
-                           Ec        Lc   Mc                Lc == Mc -> END.
+    The algorithm will first move all the Linux virtual machines from the host
+    with the greatest amount of Microsoft(R) Windows virtual machines, these
+    Linux VMs will be migrated to the hosts with the most amount of resources
+    available within a list of hosts (normally a cluster). This node (now 
+    containing only Windows VMs) will be the pivot for all operations. All
+    other Windows VMs from the remaining hosts will be migrated towards the
+    pivot following the order: Firstly the VMs from the Host with the least
+    amount of Windows VMs (from the smallest VM to the largest), until the
+    pivot is "full" (not enough resources available for receiving another 
+    Windows VM). After declared "full", the pivot will be removed from the
+    algorithm and the process starts again (by finding a new Pivot).
 
 """
 
@@ -296,7 +240,7 @@ class SegregationManager(object):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
         # minimum amount of memory per host before considering it full (bytes):
-        self.min_memory_per_host = 8*1024*1024*1024
+        self.min_memory_per_host = 0
 
     def most_empty_stack(self, host_list):
         """ Compare all hosts within a list of hosts and returns a sorted list, 
@@ -400,8 +344,11 @@ class SegregationManager(object):
         the migration will not take place.
     
         :param vm: a virtual machine to be migrated
+        :type vm: VM
         :param src_host: source host the VM will be migrated from
+        :type src_host: Host
         :param dst_host: destination host the VM will be migrated to
+        :type dst_host: Host
         :return: True if the VM has been migrated or False otherwise
         :rtype: bool
         """
@@ -439,45 +386,50 @@ class SegregationManager(object):
 
             return True
         else:
-            print "\t\t[DEBUG] - VM: %s \t MEM_REQ: %sMB \t HOST_FREE_MEM: %sMB \t HOST: %s" % (
-                vm.vm_name, vm.memory_required/1024/1024, dst_host.memory_free/1024/1024, dst_host.host_name
-            )
             raise NotEnoughResources
 
-    def prepare_emptiest_host(self, host_list):
-        """testing new algorithm"""
+    def remove_linux_from_most_windows_host(self, host_list):
+        """ Move all linux virtual machines from Host with the most amount of
+        Microsoft(R) Windows virtual machines.
+         
+         :param host_list: An arbitrary list of Host instances
+         :type host_list: deque
+         """
 
-        most_empty_host_lst = self.most_empty_stack(host_list)
+        most_windows_host_list = self.most_windows_stack(host_list)
+        most_empty_host_list = self.most_empty_stack(host_list)
 
-        # gather linux vm from the most empty host:
+        # gather all Linux VMs from the host with the biggest amount of Windows
         for vm in sorted(filter(lambda x: not VM.is_windows(x),
-                         most_empty_host_lst[0].vms)):
+                         most_windows_host_list[0].vms)):
 
-            for dst_host in most_empty_host_lst[1:]:
+            for dst_host in most_empty_host_list:
+
                 try:
-                    # tries to migrate to the 2nd emptiest host
+                    # tries to migrate to the emptiest host
                     self.migrate_vm(vm=vm,
                                     dst_host=dst_host,
-                                    src_host=most_empty_host_lst[0])
+                                    src_host=most_windows_host_list[0])
                     break
 
                 except NotEnoughResources:
-                    print "foo"
-                    # goes to the next emptiest host (3rd, 4th, etc)
+                    continue
+                except SameSourceAndDestinationHost:
                     continue
 
-        print "\t[DEBUG] Emptiest host is now ready (%s)!" \
-              % most_empty_host_lst[0].host_name
+    def segregate_cluster(self, host_list):
+        """ Recursive method to segregate an arbitrary list of Host instances.
+         
+         :param host_list: An arbitrary list of Host instances
+         :type host_list: deque
+         """
 
-    def magic(self, host_list):
-        """testing new algorithm"""
+        host_list_cp = copy(host_list)
 
-        hl_cp = copy(host_list)
+        self.remove_linux_from_most_windows_host(host_list_cp)
 
-        self.prepare_emptiest_host(hl_cp)
-
-        emptiest_host = self.most_empty_stack(hl_cp)[0]
-        remaining_hosts = self.most_empty_stack(hl_cp)[1:]
+        pivot = self.most_windows_stack(host_list_cp)[0]
+        remaining_hosts = self.most_windows_stack(host_list_cp)[1:]
 
         for src_host in self.least_windows_stack(remaining_hosts):
             # get smallest vms from remaining least windows hosts:
@@ -485,85 +437,19 @@ class SegregationManager(object):
                 try:
                     self.migrate_vm(vm=vm,
                                     src_host=src_host,
-                                    dst_host=emptiest_host)
+                                    dst_host=pivot)
                     continue
                 except MigrateVMWithAffinity:
                     # affinity! go to the next vm
                     continue
                 except NotEnoughResources:
                     try:
-                        hl_cp.remove(emptiest_host)
+                        host_list_cp.remove(pivot)
                     except ValueError:
+                        # no more hosts to iterate
                         return
-                    self.magic(hl_cp)
+                    self.segregate_cluster(host_list_cp)
                     pass
-
-    def segregate_cluster(self, host_list):
-        """ Main algorithm (procedure) for segregating virtual machines, refer 
-        to docstring at the beginning of this module for detailed information.
-    
-        :param host_list: an arbitrary list of `Host` instances
-        :type host_list: deque
-        """
-
-        # checks if the list of hosts is valid:
-        for host in host_list:
-            if not isinstance(host, Host):
-                raise InvalidHostList
-
-        iterate = True
-
-        while iterate:
-
-            most_windows_host_lst = self.most_windows_stack(host_list)
-            most_empty_host_lst = self.most_empty_stack(host_list)
-
-            # migrates the first possible Linux virtual machine from the host
-            # with the greatest amount of Microsoft(R) Windows virtual machines
-            # to the host with the largest amount of unallocated resources.
-            for linux_vm in filter(lambda vm: not VM.is_windows(vm),
-                                   most_windows_host_lst[0].vms):
-                try:
-                    self.migrate_vm(vm=linux_vm,
-                                    src_host=most_windows_host_lst[0],
-                                    dst_host=most_empty_host_lst[0])
-                    break
-                except MigrateVMWithAffinity:
-                    print "\t[DEBUG] - A - MigrateVMWithAffinity"
-                    continue
-                except SameSourceAndDestinationHost:
-                    print "\t[DEBUG] - A - SameSourceAndDestinationHost"
-                    continue
-                except NotEnoughResources:
-                    print "\t[DEBUG] - A - NotEnoughResources"
-                    continue
-
-            least_windows_host_lst = self.least_windows_stack(host_list)
-
-            # migrates the smallest Microsoft(R) Windows virtual machine
-            # from the host with the least amount of Microsoft(R) Windows
-            # virtual machines to the host with the greatest amount of
-            # Microsoft(R) Windows virtual machines.
-            for windows_vm in sorted(filter(VM.is_windows,
-                                     least_windows_host_lst[0].vms)):
-
-                for most_windows_host in most_windows_host_lst:
-
-                    try:
-                        self.migrate_vm(vm=windows_vm,
-                                        src_host=least_windows_host_lst[0],
-                                        dst_host=most_windows_host)
-                        break
-                    except MigrateVMWithAffinity:
-                        print "\t[DEBUG] - B - MigrateVMWithAffinity"
-                        break
-                    except SameSourceAndDestinationHost:
-                        print "\t[DEBUG] - B - SameSourceAndDestinationHost"
-                        iterate = False
-                        break
-                    except NotEnoughResources:
-                        print "\t[DEBUG] - B - NotEnoughResources"
-                        continue
 
 
 class SignedAPICall(object):
