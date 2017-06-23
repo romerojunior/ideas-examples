@@ -97,11 +97,13 @@ class MigrateVMWithAffinity(Exception):
 
 class VM(object):
 
-    def __init__(self, vm_id, vm_name=None, os_template=None,
-                 memory_required=None, affinity_group=None):
+    def __init__(self, vm_id, display_name=None, os_template=None,
+                 memory_required=None, affinity_group=None,
+                 instance_name=None):
         self.vm_id = vm_id
-        self.vm_name = vm_name
+        self.display_name = display_name
         self.os_template = os_template
+        self.instance_name = instance_name
         self.memory_required = memory_required
         self.affinity_group = affinity_group
 
@@ -136,7 +138,8 @@ class VM(object):
 class Host(object):
 
     def __init__(self, host_id, host_name=None, memory_total=None,
-                 memory_used=None, memory_allocated=None, dedicated=False):
+                 memory_used=None, memory_allocated=None, dedicated=False,
+                 ip_address=None):
         self.host_id = host_id
         self.host_name = host_name
         self.vms = list()
@@ -144,6 +147,7 @@ class Host(object):
         self.memory_used = memory_used
         self.memory_allocated = memory_allocated
         self.dedicated = dedicated
+        self.ip_address = ip_address
 
     def __eq__(self, other):
         """Method to compare instances of hosts by their hostname"""
@@ -366,20 +370,20 @@ class SegregationManager(object):
 
             if self.dry_run:
                 print("\t\t>>> Would migrate %s (%s) from %s to %s" %
-                      (vm.vm_name,
+                      (vm.display_name,
                        vm.os_template,
                        src_host.host_name,
                        dst_host.host_name))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
                     print("\t\t>>> Migrated %s (%s) from %s to %s" %
-                          (vm.vm_name,
+                          (vm.display_name,
                            vm.os_template,
                            src_host.host_name,
                            dst_host.host_name))
                 else:
                     print("\t\t>>> Error migrating %s (%s) from %s to %s" %
-                          (vm.vm_name,
+                          (vm.display_name,
                            vm.os_template,
                            src_host.host_name,
                            dst_host.host_name))
@@ -551,6 +555,7 @@ class CloudStack(SignedAPICall):
     
         :param cluster_id: CloudStack UUID for a specific cluster
         :type cluster_id: str
+        
         :return A deque of hosts, each with their respective virtual machines
         :rtype deque
         """
@@ -568,6 +573,7 @@ class CloudStack(SignedAPICall):
                      memory_allocated=host['memoryallocated'],
                      memory_total=host['memorytotal'],
                      memory_used=host['memoryused'],
+                     ip_address=host['ipaddress'],
                      dedicated=(True if is_dedicated else False))
 
             vm_list = self.listVirtualMachines({'hostid': h.host_id,
@@ -579,9 +585,10 @@ class CloudStack(SignedAPICall):
                     memory_bytes = int(vm['memory'])*1024*1024
 
                     virtual_machine = VM(vm_id=vm['id'],
-                                         vm_name=vm['name'],
+                                         display_name=vm['name'],
                                          os_template=vm['templatename'],
                                          affinity_group=vm['affinitygroup'],
+                                         instance_name=vm['instancename'],
                                          memory_required=memory_bytes)
 
                     h.vms.append(virtual_machine)
