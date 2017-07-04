@@ -549,7 +549,7 @@ class CloudStack(SignedAPICall):
             elif result_async['jobstatus'] == 2:
                 return False
 
-    def gather_host_list(self, cluster_id):
+    def build_host_list(self, cluster_id):
         """ Main algorithm (procedure) for segregating virtual machines, refer 
         to docstring at the beginning of this module for detailed information.
     

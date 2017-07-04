@@ -23,7 +23,7 @@
 #      Romero Galiza Jr. - rgaliza@schubergphilis.com
 """
 Example:
-    qemu = QemuGuestAgentAPI('10.0.0.1', 'i-10-1010-VM')    
+    qemu = QemuGuestAgentAPI('10.0.0.1', 'i-10-1010-VM')
     print qemu.guest_network_get_interfaces
     
 Reference:
@@ -45,8 +45,8 @@ class ConnectionManager(object):
     def _connect(self):
         """ Internal method - Tries to connect to the SSHClient() instance.
         
-        :return True in case the connection is successful, False otherwise
-        :rtype bool
+        :return: True in case the connection is successful, False otherwise
+        :rtype: bool
         """
 
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -128,14 +128,14 @@ class QemuGuestAgentAPI(ConnectionManager):
         the list of supported commands first.
         
         :param attr: Attribute to query
-        :rtype dict
+        :rtype: dict
         """
         if self._validate(attr.replace("_", "-")):
             stdout, stderr = self.run_command(
                 self._prepare_command(attr)
             )
         else:
-            stdout = {"Command not implemented or supported by QEMU-GA"}
+            stdout = {"Error": "Command not supported by QEMU-GA"}
         return stdout
 
     def _prepare_command(self, cmd):
@@ -143,7 +143,7 @@ class QemuGuestAgentAPI(ConnectionManager):
         
         :param cmd: QEMU-GA command
         :type cmd: str
-        :rtype dict
+        :rtype: str
         """
         query = "'{ \"execute\": \"%s\" }'" % cmd.replace("_", "-")
 
@@ -153,7 +153,12 @@ class QemuGuestAgentAPI(ConnectionManager):
         return command
 
     def _validate(self, cmd):
-
+        """ Validates a command against the list of supported command.
+         
+         :param cmd: QEMU-GA command
+         :type cmd: str
+         :rtype: bool
+         """
         stdout, stderr = self.run_command(
             self._prepare_command('guest-info')
         )
