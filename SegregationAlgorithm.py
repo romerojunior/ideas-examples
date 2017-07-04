@@ -528,8 +528,8 @@ class CloudStack(SignedAPICall):
         :param src_host: Source host in which the virtual machine is running
         :type dst_host: Host
         :param dst_host: Destination host for the virtual machine migration
-        :return The job ID for the async API call migrateVirtualMachine
-        :rtype str
+        :return: The job ID for the async API call migrateVirtualMachine
+        :rtype: str
         """
         request = {'virtualmachineid': vm.vm_id, 'hostid': dst_host.host_id}
 
@@ -549,15 +549,34 @@ class CloudStack(SignedAPICall):
             elif result_async['jobstatus'] == 2:
                 return False
 
+    def build_cluster_list(self, **query):
+        """ Builds a list with all clusters ID available under the CloudStack
+        instance.
+    
+        :param query: Supports all parameters from the listCluster API call
+        :type query: str
+        
+        :return: List of clusters ID
+        :rtype: list
+        """
+        result = list()
+
+        cluster_list = self.listClusters(query)
+
+        for cluster in cluster_list['cluster']:
+            result.append(cluster['id'])
+
+        return result
+
     def build_host_list(self, cluster_id):
-        """ Main algorithm (procedure) for segregating virtual machines, refer 
-        to docstring at the beginning of this module for detailed information.
+        """ Builds a deque containing instances of Host from a given cluster, 
+        each instance of Host contains a list of VM instances.
     
         :param cluster_id: CloudStack UUID for a specific cluster
         :type cluster_id: str
         
-        :return A deque of hosts, each with their respective virtual machines
-        :rtype deque
+        :return: A deque of hosts, each with their respective virtual machines
+        :rtype: deque
         """
         result = deque()
 
