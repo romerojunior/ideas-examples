@@ -23,36 +23,8 @@
 #      Romero Galiza Jr. - rgaliza@schubergphilis.com
 
 """
-This module was designed to segregate Microsoft(R) Windows from Linux virtual
-machines within a group of hosts (Cosmic or Cloudstack), thus helping reducing
-the amount of licenses needed for all Microsoft(R) Windows hosts. The implemen-
-tation is based on a ranking algorithms. 
-
-Import considerations:
-
-    * Each dedicated host will be ignored;
-    * Each host without enough resources will be ignored;
-    * Each virtual machine with a defined affinity group won't be migrated;
-    * Each virtual machine with a defined affinity group will be ignored from
-      the `Lc` (least amount of Microsoft(R) Windows) calculation.
-      
-How does it work?
-
-    The algorithm will first move all the Linux virtual machines from the host
-    with the greatest amount of Microsoft(R) Windows virtual machines, these
-    Linux VMs will be migrated to the hosts with the most amount of resources
-    available within a list of hosts (normally a cluster). This node (now 
-    containing only Windows VMs) will be the pivot for all operations. All
-    other Windows VMs from the remaining hosts will be migrated towards the
-    pivot following the order: Firstly the VMs from the Host with the least
-    amount of Windows VMs (from the smallest VM to the largest), until the
-    pivot is "full" (not enough resources available for receiving another 
-    Windows VM). After declared "full", the pivot will be removed from the
-    algorithm and the process starts again (by finding a new Pivot).
-
+    TODO: Write something here.
 """
-
-from copy import copy
 from collections import deque
 from operator import methodcaller, attrgetter
 from time import sleep
@@ -137,11 +109,11 @@ class VM(object):
 
 class Host(object):
 
-    def __init__(self, host_id, host_name=None, memory_total=None,
+    def __init__(self, host_id, fqdn=None, memory_total=None,
                  memory_used=None, memory_allocated=None, dedicated=False,
                  ip_address=None):
         self.host_id = host_id
-        self.host_name = host_name
+        self.fqdn = fqdn
         self.vms = list()
         self.memory_total = memory_total
         self.memory_used = memory_used
@@ -164,15 +136,25 @@ class Host(object):
 
     @property
     def amount_of_vms(self):
-        """Property to define the amount of virtual machines"""
+        """ Returns the amount of virtual machines running on the host 
+        instance.
+        """
         return len(self.vms)
 
     @property
     def is_full(self):
-        if self.memory_free > (512*1024*1024):
-            return False
-        else:
-            return True
+        return True if self.memory_free < (512*1024*1024) else False
+
+    @property
+    def occupancy_ratio(self):
+        """ Returns the Windows virtual machines ratio of the host instance"""
+        whole = self.memory_total
+        part = self.memory_allocated
+        try:
+            ratio = float(part)/float(whole)
+        except ZeroDivisionError:
+            ratio = 0
+        return round(ratio, 2)
 
     def append_vm(self, vm):
         """ Appends a virtual machine to a host taking into account the amount
@@ -209,6 +191,16 @@ class Host(object):
                 counter += 1
         return counter
 
+    def win_ratio(self, filter_affinity=False):
+        """ Returns the Windows virtual machines ratio of the host instance"""
+        whole = self.amount_of_vms
+        part = self.amount_of_windows_vms(filter_affinity)
+        try:
+            ratio = float(part)/float(whole)
+        except ZeroDivisionError:
+            ratio = 0
+        return round(ratio, 2)
+
     def amount_of_affinity_vms(self):
         """ Counts the amount of virtual machines with affinity group.
 
@@ -222,8 +214,7 @@ class Host(object):
         return counter
 
     def is_dedicated(self):
-        """ Verifies if the instance of Host is dedicated. Useful as a filter.
-    
+        """ Verifies if the host instance is dedicated.    
         :return: True if instance is dedicated, False otherwise
         :rtype: bool
         """
@@ -237,108 +228,44 @@ class Host(object):
         """
         return True if self.vms else False
 
+    def sort_windows_vms(self, reverse=False):
+        result = list()
+        for vm in sorted(filter(VM.is_windows, self.vms), reverse=reverse):
+            result.append(vm)
+        return result
+
 
 class SegregationManager(object):
 
     def __init__(self, ias_handler=None, dry_run=False):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
-        # minimum amount of memory per host before considering it full (bytes):
-        self.min_memory_per_host = 0
 
-    def most_empty_stack(self, host_list):
-        """ Compare all hosts within a list of hosts and returns a sorted list, 
-        the first element being the host with the highest amount of resources
-        available, if the amount of available memory is the same, the tie 
-        breaker will be amount of running virtual machines.
-    
-        :param host_list: list containing all hosts to analyze
-        :type host_list: deque
-        :return: list with sorted hosts, hosts with the highest amount of
-         resources available comes first
-        :rtype: deque
+    @staticmethod
+    def sort_by_resources(host_list, reverse=False):
+        """ Sort a list of hosts starting with the lower occupancy ratio.
         """
+        return sorted(host_list,
+                      key=attrgetter('occupancy_ratio'),
+                      reverse=reverse)
 
-        tmp_a = list()
-        tmp_b = list()
+    @staticmethod
+    def sort_by_windows_vms(host_list, reverse=False):
+        """ Sort a list of hosts starting with the least amount of Windows 
+        virtual machines. Dedicated hosts are ignored. Virtual Machines with
+        anti-affinity rules are ignored.
+        """
         result = list()
 
-        for i in host_list:
-            for n in host_list:
-                if n == i:
-                    tmp_b.append(n)
-                    tmp_a = sorted(tmp_b,
-                                   key=attrgetter('memory_free'),
-                                   reverse=True)
-                else:
-                    if n.memory_free == i.memory_free:
-                        tmp_b.append(n)
-                    tmp_a = sorted(tmp_b,
-                                   key=attrgetter('amount_of_vms'))
-
-        for i in tmp_a:
-            if i not in result:
-                result.append(i)
-
-        return result
-
-    def most_windows_stack(self, host_list, filter_full=True):
-        """ Compare all hosts within a list of hosts and returns a sorted list,
-        the first element being the host with the greatest amount of Microsoft
-        Windows VMs. Hosts without any capacity to allocate more VMs will be 
-        ignored if :param filter_full is set to True.
-    
-        :param host_list: list containing all hosts to analyze
-        :type host_list: deque
-        :param filter_full: if set to True full hosts will be ignored
-        :type filter_full: bool
-        :return: list with sorted hosts, hosts with greatest amount of 
-        Microsoft(R) Windows VM comes first
-        :rtype: deque
-        """
-
-        most_win_dq = deque()
-
+        # ignore dedicated hosts:
         for host in filter(lambda h: not h.is_dedicated(), host_list):
-            # only non-dedicated hosts
-            if host.memory_free >= self.min_memory_per_host:
-                # only hosts with enough memory
-                most_win_dq.append(host)
-
-        if filter_full:
-            # by default returns only hosts with enough memory
-            return sorted(most_win_dq,
-                          key=methodcaller('amount_of_windows_vms'),
-                          reverse=True)
-        else:
-            return deque(sorted(host_list,
-                                key=methodcaller('amount_of_windows_vms'),
-                                reverse=True))
-
-    def least_windows_stack(self, host_list):
-        """ Compare all hosts within a list of hosts and returns a sorted list, 
-        the first element being the host with the least amount of Microsoft(R) 
-        Windows virtual machines. Hosts without any Microsoft(R) Windows VM 
-        will be ignored. Microsoft(R) Windows virtual machines with affinity 
-        group won't be taken into account since they can't be migrated.
-    
-        :param host_list: list containing all hosts to analyze
-        :type host_list: deque
-        :return: list with sorted hosts, hosts with greatest amount of 
-        Microsoft(R) Windows virtual machines comes first
-        :rtype: deque
-        """
-
-        least_win_dq = deque()
-
-        for host in filter(lambda h: not h.is_dedicated(), host_list):
-            # only non-dedicated hosts
+            # ignore anti-affinity virtual machines:
             if host.amount_of_windows_vms(filter_affinity=True) > 0:
-                # only non-affinity windows vms are counted
-                least_win_dq.append(host)
+                result.append(host)
 
-        return sorted(least_win_dq,
-                      key=methodcaller('amount_of_windows_vms', True))
+        return sorted(result,
+                      key=methodcaller('amount_of_windows_vms'),
+                      reverse=reverse)
 
     def migrate_vm(self, vm, src_host, dst_host):
         """ Effectively migrates a virtual machine from a src_host to a 
@@ -359,61 +286,144 @@ class SegregationManager(object):
         if vm.has_affinity:
             # migration not needed when affinity group is set
             raise MigrateVMWithAffinity
+
         if src_host == dst_host:
             # migration is not needed nor possible
             # add warn log message
             raise SameSourceAndDestinationHost
+
+        if dst_host.is_full:
+            raise NotEnoughResources
+
         if dst_host.memory_free >= vm.memory_required:
 
             src_host.remove_vm(vm)
             dst_host.append_vm(vm)
 
             if self.dry_run:
-                print("\t\t>>> Would migrate %s (%s) from %s to %s" %
+                print("\t\t\t>>> Would migrate %s (%s) from %s to %s" %
                       (vm.display_name,
                        vm.os_template,
-                       src_host.host_name,
-                       dst_host.host_name))
+                       src_host.fqdn,
+                       dst_host.fqdn))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
-                    print("\t\t>>> Migrated %s (%s) from %s to %s" %
+                    print("\t\t\t>>> Migrated %s (%s) from %s to %s" %
                           (vm.display_name,
                            vm.os_template,
-                           src_host.host_name,
-                           dst_host.host_name))
+                           src_host.fqdn,
+                           dst_host.fqdn))
                 else:
-                    print("\t\t>>> Error migrating %s (%s) from %s to %s" %
+                    print("\t\t\t>>> Error migrating %s (%s) from %s to %s" %
                           (vm.display_name,
                            vm.os_template,
-                           src_host.host_name,
-                           dst_host.host_name))
+                           src_host.fqdn,
+                           dst_host.fqdn))
 
             return True
         else:
             raise NotEnoughResources
 
-    def remove_linux_from_most_windows_host(self, host_list):
+    def prepare_src_dst(self, min_win_vms, host_list):
+
+        src_hosts = list()
+        dst_hosts = list()
+
+        for host in filter(lambda h: not h.is_dedicated(), host_list):
+
+            if host.amount_of_windows_vms() == 0:
+                pass
+            elif 0 < host.amount_of_windows_vms() <= min_win_vms:
+                src_hosts.append(host)
+                continue
+            else:
+                dst_hosts.append(host)
+                continue
+
+        return {'src': src_hosts, 'dst': dst_hosts}
+
+    def segregate(self, host_list, min_win_vms=5):
+
+        hosts = self.prepare_src_dst(
+            min_win_vms=min_win_vms,
+            host_list=host_list
+        )
+
+        if len(hosts['dst']) == 0 and len(hosts['src']) == 0:
+            print "Empty hypervisor!"
+            return 0
+
+        elif len(hosts['dst']) > 0 and len(hosts['src']) == 0:
+            print "Healthy cluster!"
+            return 0
+
+        elif len(hosts['dst']) == 0 and len(hosts['src']) > 0:
+            print "Bad situation, going recursive!"
+            self.segregate(
+                host_list=host_list,
+                min_win_vms=min_win_vms-1
+            )
+            return 0
+
+        else:
+
+            print "Preparing migrations for hosts " \
+                  "(minimum %s Windows VMs):\n" % min_win_vms
+
+            for i in hosts['src']:
+                print u'\u25b2' + " SRC: %s" % i.fqdn
+
+            for i in hosts['dst']:
+                print u'\u25bc' + " DST: %s" % i.fqdn
+            print
+
+        dst_hosts = self.sort_by_resources(hosts['dst'])
+        src_hosts = self.sort_by_windows_vms(hosts['src'])
+
+        for src in src_hosts:
+            print "\tCurrent source: %s" % src.fqdn
+
+            # only windows vms sorted by size, biggest first:
+            for vm in sorted(filter(VM.is_windows, src.vms), reverse=True):
+                print "\t\tCurrent VM: %s" % vm.instance_name
+
+                try:
+                    for dst in dst_hosts:
+                        print "\t\t\tCurrent destination: %s" % dst.fqdn
+
+                        try:
+                            self.migrate_vm(vm=vm,
+                                            src_host=src,
+                                            dst_host=dst)
+                            break
+                        except NotEnoughResources:
+                            print "\t\t\t\t(!) Not enough resources at %s" % dst.fqdn
+                            continue
+
+                except MigrateVMWithAffinity:
+                    print "\t\t\t(!) Affinity configured for %s" % vm.instance_name
+                    continue
+
+    def migrate_linux_from_host(self, host, host_list):
         """ Move all linux virtual machines from Host with the most amount of
         Microsoft(R) Windows virtual machines.
-         
-         :param host_list: An arbitrary list of Host instances
-         :type host_list: deque
-         """
+        """
 
-        most_windows_host_list = self.most_windows_stack(host_list)
-        most_empty_host_list = self.most_empty_stack(host_list)
+        sorted_windows_host_lst = self.sort_by_windows_vms(host_list, reverse=True)
+
+        sorted_resources_host_lst = self.sort_by_resources(host_list)
 
         # gather all Linux VMs from the host with the biggest amount of Windows
         for vm in sorted(filter(lambda x: not VM.is_windows(x),
-                         most_windows_host_list[0].vms)):
+                                sorted_windows_host_lst[0].vms)):
 
-            for dst_host in most_empty_host_list:
+            for dst_host in sorted_resources_host_lst:
 
                 try:
                     # tries to migrate to the emptiest host
                     self.migrate_vm(vm=vm,
                                     dst_host=dst_host,
-                                    src_host=most_windows_host_list[0])
+                                    src_host=sorted_windows_host_lst[0])
                     break
 
                 except NotEnoughResources:
@@ -422,40 +432,6 @@ class SegregationManager(object):
                     continue
                 except MigrateVMWithAffinity:
                     continue
-
-    def segregate_cluster(self, host_list):
-        """ Recursive method to segregate an arbitrary list of Host instances.
-         
-         :param host_list: An arbitrary list of Host instances
-         :type host_list: deque
-         """
-
-        host_list_cp = copy(host_list)
-
-        self.remove_linux_from_most_windows_host(host_list_cp)
-
-        pivot = self.most_windows_stack(host_list_cp)[0]
-        remaining_hosts = self.most_windows_stack(host_list_cp)[1:]
-
-        for src_host in self.least_windows_stack(remaining_hosts):
-            # get smallest vms from remaining least windows hosts:
-            for vm in sorted(filter(VM.is_windows, src_host.vms)):
-                try:
-                    self.migrate_vm(vm=vm,
-                                    src_host=src_host,
-                                    dst_host=pivot)
-                    continue
-                except MigrateVMWithAffinity:
-                    # affinity! go to the next vm
-                    continue
-                except NotEnoughResources:
-                    try:
-                        host_list_cp.remove(pivot)
-                    except ValueError:
-                        # no more hosts to iterate
-                        return
-                    self.segregate_cluster(host_list_cp)
-                    pass
 
 
 class SignedAPICall(object):
@@ -588,7 +564,7 @@ class CloudStack(SignedAPICall):
                                                     'listall': 'true'})
 
             h = Host(host_id=host['id'],
-                     host_name=host['name'],
+                     fqdn=host['name'],
                      memory_allocated=host['memoryallocated'],
                      memory_total=host['memorytotal'],
                      memory_used=host['memoryused'],
@@ -615,7 +591,6 @@ class CloudStack(SignedAPICall):
             result.appendleft(h)
 
         return result
-
 
 if __name__ == "__main__":
     pass
