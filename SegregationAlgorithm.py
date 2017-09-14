@@ -120,6 +120,8 @@ class Host(object):
         self.memory_allocated = memory_allocated
         self.dedicated = dedicated
         self.ip_address = ip_address
+        self.migrations_in = 0
+        self.migrations_out = 0
 
     def __eq__(self, other):
         """Method to compare instances of hosts by their hostname"""
@@ -142,10 +144,6 @@ class Host(object):
         return len(self.vms)
 
     @property
-    def is_full(self):
-        return True if self.memory_free < (512*1024*1024) else False
-
-    @property
     def occupancy_ratio(self):
         """ Returns the Windows virtual machines ratio of the host instance"""
         whole = self.memory_total
@@ -163,6 +161,7 @@ class Host(object):
         :param vm: Instance of VM
         :type vm: VM
         """
+        self.migrations_in += 1
         self.memory_allocated += vm.memory_required
         self.vms.append(vm)
         return
@@ -174,6 +173,7 @@ class Host(object):
         :param vm: Instance of VM
         :type vm: VM
         """
+        self.migrations_out += 1
         self.memory_allocated -= vm.memory_required
         self.vms.remove(vm)
         return
@@ -259,15 +259,13 @@ class SegregationManager(object):
 
         # ignore dedicated hosts:
         for host in filter(lambda h: not h.is_dedicated(), host_list):
-            # ignore anti-affinity virtual machines:
-            if host.amount_of_windows_vms(filter_affinity=True) > 0:
-                result.append(host)
+            result.append(host)
 
         return sorted(result,
                       key=methodcaller('amount_of_windows_vms'),
                       reverse=reverse)
 
-    def migrate_vm(self, vm, src_host, dst_host):
+    def migrate_vm(self, vm, src_host, dst_host, max_occupancy=0.9):
         """ Effectively migrates a virtual machine from a src_host to a 
         dst_host if src and dst are not the same. This method will use the 
         implementation for the proper IAS provider, passed as a parameter 
@@ -280,6 +278,8 @@ class SegregationManager(object):
         :type src_host: Host
         :param dst_host: destination host the VM will be migrated to
         :type dst_host: Host
+        :param max_occupancy: max occupancy ratio
+        :type max_occupancy: float
         :return: True if the VM has been migrated or False otherwise
         :rtype: bool
         """
@@ -292,7 +292,7 @@ class SegregationManager(object):
             # add warn log message
             raise SameSourceAndDestinationHost
 
-        if dst_host.is_full:
+        if dst_host.occupancy_ratio > max_occupancy:
             raise NotEnoughResources
 
         if dst_host.memory_free >= vm.memory_required:
@@ -342,7 +342,63 @@ class SegregationManager(object):
 
         return {'src': src_hosts, 'dst': dst_hosts}
 
-    def segregate(self, host_list, min_win_vms=5):
+    def migrate_linux_from_host(self, src_host, host_list, max_occupancy=0.9):
+        """ Move all linux virtual machines from source host with the most 
+        amount of  Microsoft Windows virtual machines to the most resourceful
+        host within a host list.
+        """
+
+        sorted_host_list = self.sort_by_resources(host_list)
+
+        for vm in sorted(
+                filter(
+                    lambda x: not VM.is_windows(x), src_host.vms
+                ),
+                reverse=True
+        ):
+            try:
+                for dst_host in sorted_host_list:
+                    try:
+                        self.migrate_vm(vm=vm,
+                                        dst_host=dst_host,
+                                        src_host=src_host,
+                                        max_occupancy=max_occupancy)
+                        break
+                    except NotEnoughResources:
+                        continue
+                    except SameSourceAndDestinationHost:
+                        continue
+            except MigrateVMWithAffinity:
+                continue
+
+    def migrate_windows_to_host(self, dst_host, host_list, max_occupancy=0.9):
+        """ Move all windows virtual machines from host list to a destination
+        host instance until resources are exhausted.
+        """
+        for src_host in host_list:
+            try:
+                for vm in sorted(
+                    filter(
+                        lambda x: VM.is_windows(x), src_host.vms
+                    )
+                ):
+                    try:
+                        self.migrate_vm(vm=vm,
+                                        dst_host=dst_host,
+                                        src_host=src_host,
+                                        max_occupancy=max_occupancy)
+                    except MigrateVMWithAffinity:
+                        continue
+
+            except SameSourceAndDestinationHost:
+                continue
+
+            except NotEnoughResources:
+                break
+
+        return
+
+    def soft_segregate(self, host_list, min_win_vms=5):
 
         hosts = self.prepare_src_dst(
             min_win_vms=min_win_vms,
@@ -359,7 +415,7 @@ class SegregationManager(object):
 
         elif len(hosts['dst']) == 0 and len(hosts['src']) > 0:
             print "Bad situation, going recursive!"
-            self.segregate(
+            self.soft_segregate(
                 host_list=host_list,
                 min_win_vms=min_win_vms-1
             )
@@ -397,41 +453,60 @@ class SegregationManager(object):
                                             dst_host=dst)
                             break
                         except NotEnoughResources:
-                            print "\t\t\t\t(!) Not enough resources at %s" % dst.fqdn
+                            print "\t\t\t\t(!) Not enough resources at %s" % (
+                                dst.fqdn,
+                            )
                             continue
 
                 except MigrateVMWithAffinity:
-                    print "\t\t\t(!) Affinity configured for %s" % vm.instance_name
+                    print "\t\t\t(!) Affinity configured for %s" % (
+                        vm.instance_name,
+                    )
                     continue
 
-    def migrate_linux_from_host(self, host, host_list):
-        """ Move all linux virtual machines from Host with the most amount of
-        Microsoft(R) Windows virtual machines.
-        """
+    def hard_segregate(self, host_list, max_occupancy=0.9):
 
-        sorted_windows_host_lst = self.sort_by_windows_vms(host_list, reverse=True)
+        win_counter = 0
 
-        sorted_resources_host_lst = self.sort_by_resources(host_list)
+        for h in host_list:
+            for vm in h.vms:
+                if VM.is_windows(vm):
+                    win_counter += 1
 
-        # gather all Linux VMs from the host with the biggest amount of Windows
-        for vm in sorted(filter(lambda x: not VM.is_windows(x),
-                                sorted_windows_host_lst[0].vms)):
+        # do not continue if no more Windows virtual machines are present:
+        if win_counter == 0:
+            print "Finished."
+            return
 
-            for dst_host in sorted_resources_host_lst:
+        sorted_host_list = self.sort_by_windows_vms(
+            host_list=host_list,
+            reverse=True
+        )
 
-                try:
-                    # tries to migrate to the emptiest host
-                    self.migrate_vm(vm=vm,
-                                    dst_host=dst_host,
-                                    src_host=sorted_windows_host_lst[0])
-                    break
+        pivot = sorted_host_list[0]
+        remaining_hosts = sorted_host_list[1:]
 
-                except NotEnoughResources:
-                    continue
-                except SameSourceAndDestinationHost:
-                    continue
-                except MigrateVMWithAffinity:
-                    continue
+        print "Current host: %s" % pivot.fqdn
+        print "\tMigrating Linux virtual machines away from host"
+
+        self.migrate_linux_from_host(
+            src_host=pivot,
+            host_list=host_list,
+            max_occupancy=max_occupancy
+        )
+
+        print "\tMigrating Windows virtual machines to host"
+
+        self.migrate_windows_to_host(
+            dst_host=pivot,
+            host_list=host_list,
+            max_occupancy=max_occupancy
+        )
+
+        try:
+            self.hard_segregate(remaining_hosts)
+        except IndexError:
+            print "No more iterations possible for this cluster."
 
 
 class SignedAPICall(object):
@@ -500,8 +575,6 @@ class CloudStack(SignedAPICall):
 
         :type vm: VM
         :param vm: Virtual Machine to be migrated
-        :type src_host: Host
-        :param src_host: Source host in which the virtual machine is running
         :type dst_host: Host
         :param dst_host: Destination host for the virtual machine migration
         :return: The job ID for the async API call migrateVirtualMachine
