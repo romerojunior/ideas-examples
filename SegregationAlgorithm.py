@@ -22,9 +22,6 @@
 
 #      Romero Galiza Jr. - rgaliza@schubergphilis.com
 
-"""
-    TODO: Write something here.
-"""
 from collections import deque
 from operator import methodcaller, attrgetter
 from time import sleep
@@ -80,15 +77,22 @@ class VM(object):
         self.affinity_group = affinity_group
 
     def __lt__(self, other):
-        """Method to handle sorting of VM instances by the amount of memory"""
+        """ Method to handle sorting of VM instances by the amount of memory.
+        
+        :return:               comparison between the current VM instance and 
+                               another VM instance
+        :rtype:                bool
+        
+        """
         return self.memory_required < other.memory_required
 
     @property
     def has_affinity(self):
         """Check if the virtual machine belongs to any affinity rule.
         
-        :return: True if an affinity group is set, False otherwise.
-        :rtype: bool
+        :return:               True if an affinity group is set or False 
+                               otherwise
+        :rtype:                bool
         """
         return bool(self.affinity_group)
 
@@ -98,11 +102,11 @@ class VM(object):
         This static method is particularly useful as a filter. A lambda 
         function can be used to invert the result finding only linux VMs.
     
-        :param vm: Virtual machine to verify
-        :type vm: VM
-        :return: True if the VM OS type is from Microsoft (R) Windows type, 
-         False otherwise
-        :rtype: bool
+        :param vm:             VM instance to be verified
+        :type vm:              VM
+        :return:               True if the VM OS type is from Windows type or 
+                               False otherwise
+        :rtype:                bool
         """
         return True if vm.os_template.lower().startswith('win') else False
 
@@ -145,7 +149,12 @@ class Host(object):
 
     @property
     def occupancy_ratio(self):
-        """ Returns the Windows virtual machines ratio of the host instance"""
+        """ Returns the host instance occupancy ratio, which is the rounded 
+        quotient of the total memory and allocated memory of a Host instance.
+        
+        :return:               anything between 0 and 1
+        :rtype:                float
+        """
         whole = self.memory_total
         part = self.memory_allocated
         try:
@@ -155,11 +164,11 @@ class Host(object):
         return round(ratio, 2)
 
     def append_vm(self, vm):
-        """ Appends a virtual machine to a host taking into account the amount
-        of resources required for such.
+        """ Appends a virtual machine to a host instance, update its
+        resources and migration counter.
     
-        :param vm: Instance of VM
-        :type vm: VM
+        :param vm:             Instance of VM
+        :type vm:              VM
         """
         self.migrations_in += 1
         self.memory_allocated += vm.memory_required
@@ -167,11 +176,11 @@ class Host(object):
         return
 
     def remove_vm(self, vm):
-        """ Removes a virtual machine to a host taking into account the amount
-        of resources required for such.
+        """ Removes a virtual machine from a host instance, update its
+        resources and migration counter.
     
-        :param vm: Instance of VM
-        :type vm: VM
+        :param vm:             Instance of VM
+        :type vm:              VM
         """
         self.migrations_out += 1
         self.memory_allocated -= vm.memory_required
@@ -179,9 +188,14 @@ class Host(object):
         return
 
     def amount_of_windows_vms(self, filter_affinity=False):
-        """ Method to define the amount of Microsoft(R) Windows machines 
-        running in the instance of Host, filtering virtual machines with
-        affinity group if flagged to do so."""
+        """ Method to define the amount of  Windows virtual machines running
+        in a host instance, filtering virtual machines with affinity group if
+        flagged to do so.
+        
+        :param filter_affinity: filter virtual machines with affinity
+        :return:                windows virtual machines count
+        :rtype:                 int
+        """
         counter = 0
         for vm in filter(VM.is_windows, self.vms):
             if filter_affinity:
@@ -192,7 +206,12 @@ class Host(object):
         return counter
 
     def win_ratio(self, filter_affinity=False):
-        """ Returns the Windows virtual machines ratio of the host instance"""
+        """ Returns the host instance Windows virtual machines ratio.
+        
+        :param filter_affinity: filter virtual machines with affinity
+        :return:                anything between 0 and 1
+        :rtype:                 float
+        """
         whole = self.amount_of_vms
         part = self.amount_of_windows_vms(filter_affinity)
         try:
@@ -202,37 +221,37 @@ class Host(object):
         return round(ratio, 2)
 
     def amount_of_affinity_vms(self):
-        """ Counts the amount of virtual machines with affinity group.
+        """ Counts the amount of virtual machines within the host instance 
+        with anti-affinity group configured.
 
-        :return: Counter with the amount of VMs with affinity group set
-        :rtype: int
+        :return:               amount of virtual machines with affinity
+        :rtype:                int
         """
-        counter = 0
-        for vm in self.vms:
-            if vm.has_affinity:
-                counter += 1
-        return counter
+        return len(
+            [vm for vm in self.vms if vm.has_affinity]
+        )
 
     def is_dedicated(self):
-        """ Verifies if the host instance is dedicated.    
-        :return: True if instance is dedicated, False otherwise
-        :rtype: bool
+        """ Verifies if the host instance is dedicated. Although each instance
+        has a dedicated attribute, a method can be used as a filter function.
+        
+        :return:               True if instance is dedicated, False otherwise
+        :rtype:                bool
         """
         return True if self.dedicated else False
 
-    def is_empty(self):
-        """ Verifies if the host is empty.
-
-        :return: True host is empty, otherwise False.
-        :rtype: bool
-        """
-        return True if self.vms else False
-
     def sort_windows_vms(self, reverse=False):
-        result = list()
-        for vm in sorted(filter(VM.is_windows, self.vms), reverse=reverse):
-            result.append(vm)
-        return result
+        """ Returns a list of Windows virtual machines sorted by memory.
+        
+        :param reverse:        reverses the sort order
+        :type reverse:         bool
+        :return:               list of virtual machine instances
+        :rtype:                list
+        """
+        return sorted(
+            [vm for vm in self.vms if VM.is_windows(vm)],
+            reverse=reverse
+        )
 
 
 class SegregationManager(object):
@@ -243,7 +262,14 @@ class SegregationManager(object):
 
     @staticmethod
     def sort_by_resources(host_list, reverse=False):
-        """ Sort a list of hosts starting with the lower occupancy ratio.
+        """ Sort a list of hosts starting with the host with lower occupancy
+        ratio, unless reversed.
+        
+        :param host_list:      list of hosts instances
+        :type host_list:       list
+        :param reverse:        reverse sorting
+        :type reverse:         bool
+        :rtype:                list
         """
         return sorted(host_list,
                       key=attrgetter('occupancy_ratio'),
@@ -252,8 +278,13 @@ class SegregationManager(object):
     @staticmethod
     def sort_by_windows_vms(host_list, reverse=False):
         """ Sort a list of hosts starting with the least amount of Windows 
-        virtual machines. Dedicated hosts are ignored. Virtual Machines with
-        anti-affinity rules are ignored.
+        virtual machines. Dedicated hosts are ignored.
+
+        :param host_list:     list of hosts instances
+        :type host_list:      list
+        :param reverse:       reverse sorting
+        :type reverse:        bool
+        :rtype:               list
         """
         result = list()
 
@@ -272,16 +303,16 @@ class SegregationManager(object):
         during the initialization of this class. If dry_run is set to True,
         the migration will not take place.
     
-        :param vm: a virtual machine to be migrated
-        :type vm: VM
-        :param src_host: source host the VM will be migrated from
-        :type src_host: Host
-        :param dst_host: destination host the VM will be migrated to
-        :type dst_host: Host
-        :param max_occupancy: max occupancy ratio
-        :type max_occupancy: float
-        :return: True if the VM has been migrated or False otherwise
-        :rtype: bool
+        :param vm:             virtual machine instance
+        :type vm:              VM
+        :param src_host:       source host instance
+        :type src_host:        Host
+        :param dst_host:       destination host instance
+        :type dst_host:        Host
+        :param max_occupancy:  max occupancy ratio (from 0 to 1)
+        :type max_occupancy:   float
+        :return:               True if VM has been migrated, False otherwise
+        :rtype:                bool
         """
         if vm.has_affinity:
             # migration not needed when affinity group is set
@@ -325,7 +356,16 @@ class SegregationManager(object):
             raise NotEnoughResources
 
     def prepare_src_dst(self, min_win_vms, host_list):
-
+        """ Prepares a dictionary with source hosts and destination hosts used
+        during the soft segregation algorithm.
+        
+        :param min_win_vms:    minimum amount of windows virtual machines 
+                               permitted per instance of host
+        :type min_win_vms:     int
+        :param host_list:      list of host instances
+        :type host_list:       list
+        :rtype:                dict
+        """
         src_hosts = list()
         dst_hosts = list()
 
@@ -346,8 +386,15 @@ class SegregationManager(object):
         """ Move all linux virtual machines from source host with the most 
         amount of  Microsoft Windows virtual machines to the most resourceful
         host within a host list.
+        
+        :param src_host:       source host instance
+        :type src_host:        Host
+        :param host_list:      list of host instances
+        :type host_list:       list
+        :param max_occupancy:  max occupancy ratio permitted per host, 
+                               between 0 and 1, default: 0.9
+        :type max_occupancy:   float
         """
-
         sorted_host_list = self.sort_by_resources(host_list)
 
         for vm in sorted(
@@ -374,6 +421,14 @@ class SegregationManager(object):
     def migrate_windows_to_host(self, dst_host, host_list, max_occupancy=0.9):
         """ Move all windows virtual machines from host list to a destination
         host instance until resources are exhausted.
+        
+        :param dst_host:       destination host instance
+        :type dst_host:        Host
+        :param host_list:      list of host instances
+        :type host_list:       list
+        :param max_occupancy:  max occupancy ratio permitted at destination 
+                               host, between 0 and 1, default: 0.9
+        :type max_occupancy:   float
         """
         for src_host in host_list:
             try:
@@ -399,7 +454,16 @@ class SegregationManager(object):
         return
 
     def soft_segregate(self, host_list, min_win_vms=5):
-
+        """ If a host has anything between 1 and min_win_vms, all Windows
+        virtual machines will be migrated away from it. The destination host
+        for migrated virtual machines will be any host with more than 
+        min_win_vms Windows virtual machines.
+        
+        :param host_list:      list of host instances
+        :type host_list:       list
+        :param min_win_vms:    minimum permitted amount of windows vms per host
+        :type min_win_vms:     int
+        """
         hosts = self.prepare_src_dst(
             min_win_vms=min_win_vms,
             host_list=host_list
@@ -407,11 +471,11 @@ class SegregationManager(object):
 
         if len(hosts['dst']) == 0 and len(hosts['src']) == 0:
             print "Empty hypervisor!"
-            return 0
+            return
 
         elif len(hosts['dst']) > 0 and len(hosts['src']) == 0:
             print "Healthy cluster!"
-            return 0
+            return
 
         elif len(hosts['dst']) == 0 and len(hosts['src']) > 0:
             print "Bad situation, going recursive!"
@@ -419,7 +483,7 @@ class SegregationManager(object):
                 host_list=host_list,
                 min_win_vms=min_win_vms-1
             )
-            return 0
+            return
 
         else:
 
@@ -465,7 +529,18 @@ class SegregationManager(object):
                     continue
 
     def hard_segregate(self, host_list, max_occupancy=0.9):
-
+        """ Hard segregation works by moving away all the Linux virtual
+        machine from the pivot, which is the host with the greatest amount of
+        Windows virtual machines, and then moving Windows virtual machines to
+        it, until it reaches max_occupancy. This process is done for each host
+        instance within host_list recursively.
+        
+        :param host_list:      list of host instances
+        :type host_list:       list
+        :param max_occupancy:  max occupancy ratio permitted at destination 
+                               host, between 0 and 1, default: 0.9
+        :type max_occupancy:   float
+        """
         win_counter = 0
 
         for h in host_list:
@@ -570,15 +645,15 @@ class CloudStack(SignedAPICall):
         return json.loads(data)[key]
 
     def migrate_vm(self, vm, src_host, dst_host):
-        """ Main algorithm (procedure) for segregating virtual machines, refer 
-        to docstring at the beginning of this module for detailed information.
+        """ Cloudstack/Cosmic asynchronous API call to migrateVirtualMachine,
+        waits until the job is finished.
 
-        :type vm: VM
-        :param vm: Virtual Machine to be migrated
-        :type dst_host: Host
-        :param dst_host: Destination host for the virtual machine migration
-        :return: The job ID for the async API call migrateVirtualMachine
-        :rtype: str
+        :type vm:              VM
+        :param vm:             virtual machine to be migrated
+        :type dst_host:        Host
+        :param dst_host:       destination host for the migration
+        :return:               true if successfully migrated or false otherwise
+        :rtype:                bool
         """
         request = {'virtualmachineid': vm.vm_id, 'hostid': dst_host.host_id}
 
@@ -602,11 +677,10 @@ class CloudStack(SignedAPICall):
         """ Builds a list with all clusters ID available under the CloudStack
         instance.
     
-        :param query: Supports all parameters from the listCluster API call
-        :type query: str
-        
-        :return: List of clusters ID
-        :rtype: list
+        :param query:          Supports all parameters from the listCluster
+        :type query:           str
+        :return:               list of clusters ID
+        :rtype:                list
         """
         result = list()
 
@@ -621,11 +695,10 @@ class CloudStack(SignedAPICall):
         """ Builds a deque containing instances of Host from a given cluster, 
         each instance of Host contains a list of VM instances.
     
-        :param cluster_id: CloudStack UUID for a specific cluster
-        :type cluster_id: str
-        
-        :return: A deque of hosts, each with their respective virtual machines
-        :rtype: deque
+        :param cluster_id:     CloudStack UUID for a specific cluster
+        :type cluster_id:      str
+        :return:               a list of host instances
+        :rtype:                list
         """
         result = deque()
 
@@ -663,7 +736,7 @@ class CloudStack(SignedAPICall):
 
             result.appendleft(h)
 
-        return result
+        return list(result)
 
 if __name__ == "__main__":
     pass
