@@ -256,7 +256,7 @@ class Host(object):
 
 class SegregationManager(object):
 
-    def __init__(self, ias_handler=None, dry_run=False):
+    def __init__(self, ias_handler=None, dry_run=True):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
 
