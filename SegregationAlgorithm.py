@@ -32,6 +32,14 @@ import urllib
 import json
 
 
+class DedicatedHostAsDestination(Exception):
+    """Raised if a virtual machine tries to be migrated to a dedicated host"""
+    def __init__(self):
+        msg = "Cannot migrate a virtual machine to a dedicated host."
+        Exception.__init__(self, msg)
+    pass
+
+
 class InvalidHostList(Exception):
     """Raised if the segregation algorithm receives an invalid list of hosts"""
     def __init__(self):
@@ -298,10 +306,9 @@ class SegregationManager(object):
 
     def migrate_vm(self, vm, src_host, dst_host, max_occupancy=0.9):
         """ Effectively migrates a virtual machine from a src_host to a 
-        dst_host if src and dst are not the same. This method will use the 
-        implementation for the proper IAS provider, passed as a parameter 
-        during the initialization of this class. If dry_run is set to True,
-        the migration will not take place.
+        dst_host. This method will use a given IAS provider implementation for
+        for a migration call. If dry_run is set to True, the migration will not
+        happen, but you will be notified of what would have happened.
     
         :param vm:             virtual machine instance
         :type vm:              VM
@@ -314,13 +321,14 @@ class SegregationManager(object):
         :return:               True if VM has been migrated, False otherwise
         :rtype:                bool
         """
+
+        if dst_host.is_dedicated():
+            raise DedicatedHostAsDestination
+
         if vm.has_affinity:
-            # migration not needed when affinity group is set
             raise MigrateVMWithAffinity
 
         if src_host == dst_host:
-            # migration is not needed nor possible
-            # add warn log message
             raise SameSourceAndDestinationHost
 
         if dst_host.occupancy_ratio > max_occupancy:
@@ -331,25 +339,27 @@ class SegregationManager(object):
             src_host.remove_vm(vm)
             dst_host.append_vm(vm)
 
+            f = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+
             if self.dry_run:
-                print("\t\t\t>>> Would migrate %s (%s) from %s to %s" %
-                      (vm.display_name,
-                       vm.os_template,
-                       src_host.fqdn,
-                       dst_host.fqdn))
+                print(f.format("Would migrate:",
+                               vm.instance_name,
+                               vm.os_template,
+                               src_host.fqdn.split('.')[0],
+                               dst_host.fqdn.split('.')[0]))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
-                    print("\t\t\t>>> Migrated %s (%s) from %s to %s" %
-                          (vm.display_name,
-                           vm.os_template,
-                           src_host.fqdn,
-                           dst_host.fqdn))
+                    print(f.format("Migrated:",
+                                   vm.instance_name,
+                                   vm.os_template,
+                                   src_host.fqdn.split('.')[0],
+                                   dst_host.fqdn.split('.')[0]))
                 else:
-                    print("\t\t\t>>> Error migrating %s (%s) from %s to %s" %
-                          (vm.display_name,
-                           vm.os_template,
-                           src_host.fqdn,
-                           dst_host.fqdn))
+                    print(f.format("Error migrating:",
+                                   vm.instance_name,
+                                   vm.os_template,
+                                   src_host.fqdn.split('.')[0],
+                                   dst_host.fqdn.split('.')[0]))
 
             return True
         else:
@@ -384,7 +394,7 @@ class SegregationManager(object):
 
     def migrate_linux_from_host(self, src_host, host_list, max_occupancy=0.9):
         """ Move all linux virtual machines from source host with the most 
-        amount of  Microsoft Windows virtual machines to the most resourceful
+        amount of Microsoft Windows virtual machines to the most resourceful
         host within a host list.
         
         :param src_host:       source host instance
@@ -414,6 +424,8 @@ class SegregationManager(object):
                     except NotEnoughResources:
                         continue
                     except SameSourceAndDestinationHost:
+                        continue
+                    except DedicatedHostAsDestination:
                         continue
             except MigrateVMWithAffinity:
                 continue
@@ -562,7 +574,8 @@ class SegregationManager(object):
         remaining_hosts = sorted_host_list[1:]
 
         print "Current host: %s" % pivot.fqdn
-        print "\tMigrating Linux virtual machines away from host"
+        print "\tMigrating Linux virtual machines away from %s" % \
+            pivot.fqdn.split('.')[0]
 
         self.migrate_linux_from_host(
             src_host=pivot,
@@ -570,7 +583,8 @@ class SegregationManager(object):
             max_occupancy=max_occupancy
         )
 
-        print "\tMigrating Windows virtual machines to host"
+        print "\tMigrating Windows virtual machines to %s" % \
+            pivot.fqdn.split('.')[0]
 
         self.migrate_windows_to_host(
             dst_host=pivot,
@@ -579,7 +593,7 @@ class SegregationManager(object):
         )
 
         try:
-            self.hard_segregate(remaining_hosts)
+            self.hard_segregate(remaining_hosts, max_occupancy=max_occupancy)
         except IndexError:
             print "No more iterations possible for this cluster."
 
