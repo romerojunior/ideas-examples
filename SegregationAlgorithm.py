@@ -355,7 +355,7 @@ class SegregationManager(object):
         f_blue = '\033[0;94m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
 
         if vm.domain in self.filtered_domains:
-            print(f_blue.format("Filtered VM:",
+            print(f_blue.format("Filtered:",
                                 vm.instance_name,
                                 vm.os_template,
                                 src_host.fqdn.split('.')[0],
@@ -369,7 +369,7 @@ class SegregationManager(object):
         if src_host == dst_host:
             raise SameSourceAndDestinationHost
 
-        if dst_host.occupancy_ratio > self.max_occupancy:
+        if dst_host.occupancy_ratio >= self.max_occupancy:
             raise NotEnoughResources
 
         if vm.has_affinity:
@@ -403,6 +403,10 @@ class SegregationManager(object):
                                         dst_host.fqdn.split('.')[0],
                                         dst_host.occupancy_ratio))
                 else:
+                    # error occurred, give vm back to source host:
+                    dst_host.remove_vm(vm)
+                    src_host.append_vm(vm)
+
                     print(f_erro.format("Error migrating:",
                                         vm.instance_name,
                                         vm.os_template,
