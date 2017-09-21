@@ -32,6 +32,14 @@ import urllib
 import json
 
 
+class FilteredDomain(Exception):
+    """Raised if a virtual machine being migrated should be filtered"""
+    def __init__(self):
+        msg = "Won't migrate filtered virtual machines."
+        Exception.__init__(self, msg)
+    pass
+
+
 class DedicatedHostAsDestination(Exception):
     """Raised if a virtual machine tries to be migrated to a dedicated host"""
     def __init__(self):
@@ -67,7 +75,7 @@ class SameSourceAndDestinationHost(Exception):
 class MigrateVMWithAffinity(Exception):
     """Raised if virtual machine belong to an affinity group"""
     def __init__(self):
-        msg = "Virtual machines with affinity group won't be migrated."
+        msg = "Destination host not suitable due to affinity rules."
         Exception.__init__(self, msg)
     pass
 
@@ -76,13 +84,14 @@ class VM(object):
 
     def __init__(self, vm_id, display_name=None, os_template=None,
                  memory_required=None, affinity_group=None,
-                 instance_name=None):
+                 instance_name=None, domain=None):
         self.vm_id = vm_id
         self.display_name = display_name
         self.os_template = os_template
         self.instance_name = instance_name
         self.memory_required = memory_required
         self.affinity_group = affinity_group
+        self.domain = domain
 
     def __lt__(self, other):
         """ Method to handle sorting of VM instances by the amount of memory.
@@ -279,6 +288,7 @@ class SegregationManager(object):
     def __init__(self, ias_handler=None, dry_run=True):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
+        self.filtered_domains = list()
 
     @staticmethod
     def sort_by_resources(host_list, reverse=False):
@@ -316,6 +326,11 @@ class SegregationManager(object):
                       key=methodcaller('amount_of_windows_vms'),
                       reverse=reverse)
 
+    def filter_domains(self, *uuid):
+
+        for e in uuid:
+            self.filtered_domains.append(e)
+
     def migrate_vm(self, vm, src_host, dst_host, max_occupancy=0.9):
         """ Effectively migrates a virtual machine from a src_host to a 
         dst_host. This method will use a given IAS provider implementation for
@@ -335,9 +350,18 @@ class SegregationManager(object):
         """
 
         # output formatting:
-        f_ok = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
-        f_error = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_succ = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_erro = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
         f_warn = '\033[0;33m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_blue = '\033[0;94m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+
+        if vm.domain in self.filtered_domains:
+            print(f_blue.format("Filtered VM:",
+                                vm.instance_name,
+                                vm.os_template,
+                                src_host.fqdn.split('.')[0],
+                                dst_host.fqdn.split('.')[0]))
+            raise FilteredDomain
 
         if dst_host.is_dedicated():
             raise DedicatedHostAsDestination
@@ -363,24 +387,24 @@ class SegregationManager(object):
             dst_host.append_vm(vm)
 
             if self.dry_run:
-                print(f_ok.format("Would migrate:",
-                                  vm.instance_name,
-                                  vm.os_template,
-                                  src_host.fqdn.split('.')[0],
-                                  dst_host.fqdn.split('.')[0]))
+                print(f_succ.format("Would migrate:",
+                                    vm.instance_name,
+                                    vm.os_template,
+                                    src_host.fqdn.split('.')[0],
+                                    dst_host.fqdn.split('.')[0]))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
-                    print(f_ok.format("Migrated:",
-                                      vm.instance_name,
-                                      vm.os_template,
-                                      src_host.fqdn.split('.')[0],
-                                      dst_host.fqdn.split('.')[0]))
+                    print(f_succ.format("Migrated:",
+                                        vm.instance_name,
+                                        vm.os_template,
+                                        src_host.fqdn.split('.')[0],
+                                        dst_host.fqdn.split('.')[0]))
                 else:
-                    print(f_error.format("Error migrating:",
-                                         vm.instance_name,
-                                         vm.os_template,
-                                         src_host.fqdn.split('.')[0],
-                                         dst_host.fqdn.split('.')[0]))
+                    print(f_erro.format("Error migrating:",
+                                        vm.instance_name,
+                                        vm.os_template,
+                                        src_host.fqdn.split('.')[0],
+                                        dst_host.fqdn.split('.')[0]))
 
             return True
         else:
@@ -407,21 +431,24 @@ class SegregationManager(object):
                 ),
                 reverse=True
         ):
-            for dst_host in sorted_host_list:
-                try:
-                    self.migrate_vm(vm=vm,
-                                    dst_host=dst_host,
-                                    src_host=src_host,
-                                    max_occupancy=max_occupancy)
-                    break
-                except NotEnoughResources:
-                    continue
-                except SameSourceAndDestinationHost:
-                    continue
-                except DedicatedHostAsDestination:
-                    continue
-                except MigrateVMWithAffinity:
-                    continue
+            try:
+                for dst_host in sorted_host_list:
+                    try:
+                        self.migrate_vm(vm=vm,
+                                        dst_host=dst_host,
+                                        src_host=src_host,
+                                        max_occupancy=max_occupancy)
+                        break
+                    except NotEnoughResources:
+                        continue
+                    except SameSourceAndDestinationHost:
+                        continue
+                    except DedicatedHostAsDestination:
+                        continue
+                    except MigrateVMWithAffinity:
+                        continue
+            except FilteredDomain:
+                continue
 
     def migrate_windows_to_host(self, dst_host, host_list, max_occupancy=0.9):
         """ Move all windows virtual machines from host list to a destination
@@ -449,15 +476,15 @@ class SegregationManager(object):
                                         max_occupancy=max_occupancy)
                     except MigrateVMWithAffinity:
                         continue
-
+                    except FilteredDomain:
+                        continue
             except SameSourceAndDestinationHost:
                 continue
-
             except NotEnoughResources:
                 break
         return
 
-    def hard_segregate(self, host_list, max_occupancy=0.9):
+    def segregate(self, host_list, max_occupancy=0.9):
         """ Hard segregation works by moving away all the Linux virtual
         machine from the pivot, which is the host with the greatest amount of
         Windows virtual machines, and then moving Windows virtual machines to
@@ -510,7 +537,7 @@ class SegregationManager(object):
         )
 
         try:
-            self.hard_segregate(remaining_hosts, max_occupancy=max_occupancy)
+            self.segregate(remaining_hosts, max_occupancy=max_occupancy)
         except IndexError:
             print "No more iterations possible for this cluster."
 
@@ -666,7 +693,8 @@ class CloudStack(SignedAPICall):
                                          os_template=vm['templatename'],
                                          affinity_group=affinity_group,
                                          instance_name=vm['instancename'],
-                                         memory_required=memory_bytes)
+                                         memory_required=memory_bytes,
+                                         domain=vm['domain'])
 
                     h.vms.append(virtual_machine)
 
