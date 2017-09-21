@@ -196,9 +196,8 @@ class Host(object):
         return
 
     def amount_of_windows_vms(self, filter_affinity=False):
-        """ Method to define the amount of  Windows virtual machines running
-        in a host instance, filtering virtual machines with affinity group if
-        flagged to do so.
+        """ Returns the amount of  Windows virtual machines running in a host 
+        instance, filtering virtual machines with affinity group is possible.
         
         :param filter_affinity: filter virtual machines with affinity
         :return:                windows virtual machines count
@@ -261,6 +260,19 @@ class Host(object):
             reverse=reverse
         )
 
+    def affinity_group_list(self):
+        """ Returns a list with all affinity group ID from virtual machines
+         within the host instance.
+        
+        :return:                list with affinity group ids (str)
+        :rtype:                 list
+        """
+        result = list()
+        for vm in self.vms:
+            if vm.has_affinity:
+                result.append(str(vm.affinity_group))
+        return list(set(result))
+
 
 class SegregationManager(object):
 
@@ -322,11 +334,13 @@ class SegregationManager(object):
         :rtype:                bool
         """
 
+        # output formatting:
+        f_ok = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_error = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_warn = '\033[0;33m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+
         if dst_host.is_dedicated():
             raise DedicatedHostAsDestination
-
-        if vm.has_affinity:
-            raise MigrateVMWithAffinity
 
         if src_host == dst_host:
             raise SameSourceAndDestinationHost
@@ -334,63 +348,43 @@ class SegregationManager(object):
         if dst_host.occupancy_ratio > max_occupancy:
             raise NotEnoughResources
 
+        if vm.has_affinity:
+            if vm.affinity_group in dst_host.affinity_group_list():
+                print(f_warn.format("Affinity detected:",
+                                    vm.instance_name,
+                                    vm.os_template,
+                                    src_host.fqdn.split('.')[0],
+                                    dst_host.fqdn.split('.')[0]))
+                raise MigrateVMWithAffinity
+
         if dst_host.memory_free >= vm.memory_required:
 
             src_host.remove_vm(vm)
             dst_host.append_vm(vm)
 
-            f = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
-
             if self.dry_run:
-                print(f.format("Would migrate:",
-                               vm.instance_name,
-                               vm.os_template,
-                               src_host.fqdn.split('.')[0],
-                               dst_host.fqdn.split('.')[0]))
+                print(f_ok.format("Would migrate:",
+                                  vm.instance_name,
+                                  vm.os_template,
+                                  src_host.fqdn.split('.')[0],
+                                  dst_host.fqdn.split('.')[0]))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
-                    print(f.format("Migrated:",
-                                   vm.instance_name,
-                                   vm.os_template,
-                                   src_host.fqdn.split('.')[0],
-                                   dst_host.fqdn.split('.')[0]))
+                    print(f_ok.format("Migrated:",
+                                      vm.instance_name,
+                                      vm.os_template,
+                                      src_host.fqdn.split('.')[0],
+                                      dst_host.fqdn.split('.')[0]))
                 else:
-                    print(f.format("Error migrating:",
-                                   vm.instance_name,
-                                   vm.os_template,
-                                   src_host.fqdn.split('.')[0],
-                                   dst_host.fqdn.split('.')[0]))
+                    print(f_error.format("Error migrating:",
+                                         vm.instance_name,
+                                         vm.os_template,
+                                         src_host.fqdn.split('.')[0],
+                                         dst_host.fqdn.split('.')[0]))
 
             return True
         else:
             raise NotEnoughResources
-
-    def prepare_src_dst(self, min_win_vms, host_list):
-        """ Prepares a dictionary with source hosts and destination hosts used
-        during the soft segregation algorithm.
-        
-        :param min_win_vms:    minimum amount of windows virtual machines 
-                               permitted per instance of host
-        :type min_win_vms:     int
-        :param host_list:      list of host instances
-        :type host_list:       list
-        :rtype:                dict
-        """
-        src_hosts = list()
-        dst_hosts = list()
-
-        for host in filter(lambda h: not h.is_dedicated(), host_list):
-
-            if host.amount_of_windows_vms() == 0:
-                pass
-            elif 0 < host.amount_of_windows_vms() <= min_win_vms:
-                src_hosts.append(host)
-                continue
-            else:
-                dst_hosts.append(host)
-                continue
-
-        return {'src': src_hosts, 'dst': dst_hosts}
 
     def migrate_linux_from_host(self, src_host, host_list, max_occupancy=0.9):
         """ Move all linux virtual machines from source host with the most 
@@ -413,22 +407,21 @@ class SegregationManager(object):
                 ),
                 reverse=True
         ):
-            try:
-                for dst_host in sorted_host_list:
-                    try:
-                        self.migrate_vm(vm=vm,
-                                        dst_host=dst_host,
-                                        src_host=src_host,
-                                        max_occupancy=max_occupancy)
-                        break
-                    except NotEnoughResources:
-                        continue
-                    except SameSourceAndDestinationHost:
-                        continue
-                    except DedicatedHostAsDestination:
-                        continue
-            except MigrateVMWithAffinity:
-                continue
+            for dst_host in sorted_host_list:
+                try:
+                    self.migrate_vm(vm=vm,
+                                    dst_host=dst_host,
+                                    src_host=src_host,
+                                    max_occupancy=max_occupancy)
+                    break
+                except NotEnoughResources:
+                    continue
+                except SameSourceAndDestinationHost:
+                    continue
+                except DedicatedHostAsDestination:
+                    continue
+                except MigrateVMWithAffinity:
+                    continue
 
     def migrate_windows_to_host(self, dst_host, host_list, max_occupancy=0.9):
         """ Move all windows virtual machines from host list to a destination
@@ -462,83 +455,7 @@ class SegregationManager(object):
 
             except NotEnoughResources:
                 break
-
         return
-
-    def soft_segregate(self, host_list, min_win_vms=5):
-        """ If a host has anything between 1 and min_win_vms, all Windows
-        virtual machines will be migrated away from it. The destination host
-        for migrated virtual machines will be any host with more than 
-        min_win_vms Windows virtual machines.
-        
-        :param host_list:      list of host instances
-        :type host_list:       list
-        :param min_win_vms:    minimum permitted amount of windows vms per host
-        :type min_win_vms:     int
-        """
-        hosts = self.prepare_src_dst(
-            min_win_vms=min_win_vms,
-            host_list=host_list
-        )
-
-        if len(hosts['dst']) == 0 and len(hosts['src']) == 0:
-            print "Empty hypervisor!"
-            return
-
-        elif len(hosts['dst']) > 0 and len(hosts['src']) == 0:
-            print "Healthy cluster!"
-            return
-
-        elif len(hosts['dst']) == 0 and len(hosts['src']) > 0:
-            print "Bad situation, going recursive!"
-            self.soft_segregate(
-                host_list=host_list,
-                min_win_vms=min_win_vms-1
-            )
-            return
-
-        else:
-
-            print "Preparing migrations for hosts " \
-                  "(minimum %s Windows VMs):\n" % min_win_vms
-
-            for i in hosts['src']:
-                print u'\u25b2' + " SRC: %s" % i.fqdn
-
-            for i in hosts['dst']:
-                print u'\u25bc' + " DST: %s" % i.fqdn
-            print
-
-        dst_hosts = self.sort_by_resources(hosts['dst'])
-        src_hosts = self.sort_by_windows_vms(hosts['src'])
-
-        for src in src_hosts:
-            print "\tCurrent source: %s" % src.fqdn
-
-            # only windows vms sorted by size, biggest first:
-            for vm in sorted(filter(VM.is_windows, src.vms), reverse=True):
-                print "\t\tCurrent VM: %s" % vm.instance_name
-
-                try:
-                    for dst in dst_hosts:
-                        print "\t\t\tCurrent destination: %s" % dst.fqdn
-
-                        try:
-                            self.migrate_vm(vm=vm,
-                                            src_host=src,
-                                            dst_host=dst)
-                            break
-                        except NotEnoughResources:
-                            print "\t\t\t\t(!) Not enough resources at %s" % (
-                                dst.fqdn,
-                            )
-                            continue
-
-                except MigrateVMWithAffinity:
-                    print "\t\t\t(!) Affinity configured for %s" % (
-                        vm.instance_name,
-                    )
-                    continue
 
     def hard_segregate(self, host_list, max_occupancy=0.9):
         """ Hard segregation works by moving away all the Linux virtual
@@ -666,6 +583,8 @@ class CloudStack(SignedAPICall):
         :param vm:             virtual machine to be migrated
         :type dst_host:        Host
         :param dst_host:       destination host for the migration
+        :type src_host:        source host for the migration
+        :param src_host:       Host
         :return:               true if successfully migrated or false otherwise
         :rtype:                bool
         """
@@ -739,10 +658,13 @@ class CloudStack(SignedAPICall):
 
                     memory_bytes = int(vm['memory'])*1024*1024
 
+                    affinity_group = vm['affinitygroup'][0]['id'] \
+                        if vm['affinitygroup'] else None
+
                     virtual_machine = VM(vm_id=vm['id'],
                                          display_name=vm['name'],
                                          os_template=vm['templatename'],
-                                         affinity_group=vm['affinitygroup'],
+                                         affinity_group=affinity_group,
                                          instance_name=vm['instancename'],
                                          memory_required=memory_bytes)
 
