@@ -283,6 +283,14 @@ class Host(object):
         return list(set(result))
 
 
+class MigrationState(object):
+
+    SUCCESS = 37
+    AVOIDED = 94
+    FAILURE = 31
+    WARNING = 33
+
+
 class SegregationManager(object):
 
     def __init__(self, ias_handler=None, max_occupancy=0.9, dry_run=True):
@@ -348,19 +356,11 @@ class SegregationManager(object):
         :rtype:                bool
         """
 
-        # output formatting:
-        f_succ = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
-        f_erro = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
-        f_warn = '\033[0;33m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
-        f_blue = '\033[0;94m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
-
         if vm.domain in self.filtered_domains:
-            print(f_blue.format("Filtered:",
-                                vm.instance_name,
-                                vm.os_template,
-                                src_host.fqdn.split('.')[0],
-                                dst_host.fqdn.split('.')[0],
-                                dst_host.occupancy_ratio))
+            self.print_migration(
+                MigrationState.AVOIDED,
+                'Filtered', vm, src_host, dst_host
+            )
             raise FilteredDomain
 
         if dst_host.is_dedicated():
@@ -374,12 +374,10 @@ class SegregationManager(object):
 
         if vm.has_affinity:
             if vm.affinity_group in dst_host.affinity_group_list():
-                print(f_warn.format("Affinity detected:",
-                                    vm.instance_name,
-                                    vm.os_template,
-                                    src_host.fqdn.split('.')[0],
-                                    dst_host.fqdn.split('.')[0],
-                                    dst_host.occupancy_ratio))
+                self.print_migration(
+                    MigrationState.WARNING,
+                    'Affinity detected', vm, src_host, dst_host
+                )
                 raise MigrateVMWithAffinity
 
         if dst_host.memory_free >= vm.memory_required:
@@ -388,31 +386,25 @@ class SegregationManager(object):
             dst_host.append_vm(vm)
 
             if self.dry_run:
-                print(f_succ.format("Would migrate:",
-                                    vm.instance_name,
-                                    vm.os_template,
-                                    src_host.fqdn.split('.')[0],
-                                    dst_host.fqdn.split('.')[0],
-                                    dst_host.occupancy_ratio))
+                self.print_migration(
+                    MigrationState.SUCCESS,
+                    'Would migrate', vm, src_host, dst_host
+                )
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
-                    print(f_succ.format("Migrated:",
-                                        vm.instance_name,
-                                        vm.os_template,
-                                        src_host.fqdn.split('.')[0],
-                                        dst_host.fqdn.split('.')[0],
-                                        dst_host.occupancy_ratio))
+                    self.print_migration(
+                        MigrationState.SUCCESS,
+                        'Migrated', vm, src_host, dst_host
+                    )
                 else:
                     # error occurred, give vm back to source host:
                     dst_host.remove_vm(vm)
                     src_host.append_vm(vm)
 
-                    print(f_erro.format("Error migrating:",
-                                        vm.instance_name,
-                                        vm.os_template,
-                                        src_host.fqdn.split('.')[0],
-                                        dst_host.fqdn.split('.')[0],
-                                        dst_host.occupancy_ratio))
+                    self.print_migration(
+                        MigrationState.FAILURE,
+                        'Error migrating', vm, src_host, dst_host
+                    )
 
             return True
         else:
@@ -535,6 +527,35 @@ class SegregationManager(object):
             self.segregate(remaining_hosts)
         except IndexError:
             print "No more iterations possible for this cluster."
+
+    def print_migration(self, state, msg, vm, src_host, dst_host):
+        """ Print a standard output line for each migration based on its state.
+        
+        :param state:          attribute from class MigrationState
+        :type state:           int
+        :param msg:            message to be displayed
+        :type msg:             str
+        :param vm:             virtual machine
+        :type vm:              VM
+        :param src_host:       source host
+        :type src_host:        Host
+        :param dst_host:       destination host
+        :type dst_host:        Host
+        """
+        # output format states:
+        f = '\033[0;%sm{0:>26} {1:>18} ' \
+            '| {2:<40} {3} -> {4} ({5})\033[0m' % state
+
+        # truncating long strings:
+        template = (vm.os_template[:37] + "...") \
+            if len(vm.os_template) > 40 else vm.os_template
+
+        print(f.format(msg + ":",
+                       vm.instance_name,
+                       template,
+                       src_host.fqdn.split('.')[0],
+                       dst_host.fqdn.split('.')[0],
+                       dst_host.occupancy_ratio))
 
 
 class SignedAPICall(object):
