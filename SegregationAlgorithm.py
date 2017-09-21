@@ -285,10 +285,11 @@ class Host(object):
 
 class SegregationManager(object):
 
-    def __init__(self, ias_handler=None, dry_run=True):
+    def __init__(self, ias_handler=None, max_occupancy=0.9, dry_run=True):
         self.ias_handler = ias_handler
         self.dry_run = bool(dry_run)
         self.filtered_domains = list()
+        self.max_occupancy = max_occupancy
 
     @staticmethod
     def sort_by_resources(host_list, reverse=False):
@@ -331,7 +332,7 @@ class SegregationManager(object):
         for e in uuid:
             self.filtered_domains.append(e)
 
-    def migrate_vm(self, vm, src_host, dst_host, max_occupancy=0.9):
+    def migrate_vm(self, vm, src_host, dst_host):
         """ Effectively migrates a virtual machine from a src_host to a 
         dst_host. This method will use a given IAS provider implementation for
         for a migration call. If dry_run is set to True, the migration will not
@@ -343,24 +344,23 @@ class SegregationManager(object):
         :type src_host:        Host
         :param dst_host:       destination host instance
         :type dst_host:        Host
-        :param max_occupancy:  max occupancy ratio (from 0 to 1)
-        :type max_occupancy:   float
         :return:               True if VM has been migrated, False otherwise
         :rtype:                bool
         """
 
         # output formatting:
-        f_succ = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
-        f_erro = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
-        f_warn = '\033[0;33m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
-        f_blue = '\033[0;94m{0:>26} {1:>18} | {2:<40} {3} -> {4}\033[0m'
+        f_succ = '\033[0;37m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
+        f_erro = '\033[0;31m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
+        f_warn = '\033[0;33m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
+        f_blue = '\033[0;94m{0:>26} {1:>18} | {2:<40} {3} -> {4} ({5})\033[0m'
 
         if vm.domain in self.filtered_domains:
             print(f_blue.format("Filtered VM:",
                                 vm.instance_name,
                                 vm.os_template,
                                 src_host.fqdn.split('.')[0],
-                                dst_host.fqdn.split('.')[0]))
+                                dst_host.fqdn.split('.')[0],
+                                dst_host.occupancy_ratio))
             raise FilteredDomain
 
         if dst_host.is_dedicated():
@@ -369,7 +369,7 @@ class SegregationManager(object):
         if src_host == dst_host:
             raise SameSourceAndDestinationHost
 
-        if dst_host.occupancy_ratio > max_occupancy:
+        if dst_host.occupancy_ratio > self.max_occupancy:
             raise NotEnoughResources
 
         if vm.has_affinity:
@@ -378,7 +378,8 @@ class SegregationManager(object):
                                     vm.instance_name,
                                     vm.os_template,
                                     src_host.fqdn.split('.')[0],
-                                    dst_host.fqdn.split('.')[0]))
+                                    dst_host.fqdn.split('.')[0],
+                                    dst_host.occupancy_ratio))
                 raise MigrateVMWithAffinity
 
         if dst_host.memory_free >= vm.memory_required:
@@ -391,26 +392,29 @@ class SegregationManager(object):
                                     vm.instance_name,
                                     vm.os_template,
                                     src_host.fqdn.split('.')[0],
-                                    dst_host.fqdn.split('.')[0]))
+                                    dst_host.fqdn.split('.')[0],
+                                    dst_host.occupancy_ratio))
             else:
                 if self.ias_handler.migrate_vm(vm, src_host, dst_host):
                     print(f_succ.format("Migrated:",
                                         vm.instance_name,
                                         vm.os_template,
                                         src_host.fqdn.split('.')[0],
-                                        dst_host.fqdn.split('.')[0]))
+                                        dst_host.fqdn.split('.')[0],
+                                        dst_host.occupancy_ratio))
                 else:
                     print(f_erro.format("Error migrating:",
                                         vm.instance_name,
                                         vm.os_template,
                                         src_host.fqdn.split('.')[0],
-                                        dst_host.fqdn.split('.')[0]))
+                                        dst_host.fqdn.split('.')[0],
+                                        dst_host.occupancy_ratio))
 
             return True
         else:
             raise NotEnoughResources
 
-    def migrate_linux_from_host(self, src_host, host_list, max_occupancy=0.9):
+    def migrate_linux_from_host(self, src_host, host_list):
         """ Move all linux virtual machines from source host with the most 
         amount of Microsoft Windows virtual machines to the most resourceful
         host within a host list.
@@ -419,9 +423,6 @@ class SegregationManager(object):
         :type src_host:        Host
         :param host_list:      list of host instances
         :type host_list:       list
-        :param max_occupancy:  max occupancy ratio permitted per host, 
-                               between 0 and 1, default: 0.9
-        :type max_occupancy:   float
         """
         sorted_host_list = self.sort_by_resources(host_list)
 
@@ -436,8 +437,7 @@ class SegregationManager(object):
                     try:
                         self.migrate_vm(vm=vm,
                                         dst_host=dst_host,
-                                        src_host=src_host,
-                                        max_occupancy=max_occupancy)
+                                        src_host=src_host)
                         break
                     except NotEnoughResources:
                         continue
@@ -450,7 +450,7 @@ class SegregationManager(object):
             except FilteredDomain:
                 continue
 
-    def migrate_windows_to_host(self, dst_host, host_list, max_occupancy=0.9):
+    def migrate_windows_to_host(self, dst_host, host_list):
         """ Move all windows virtual machines from host list to a destination
         host instance until resources are exhausted.
         
@@ -458,9 +458,6 @@ class SegregationManager(object):
         :type dst_host:        Host
         :param host_list:      list of host instances
         :type host_list:       list
-        :param max_occupancy:  max occupancy ratio permitted at destination 
-                               host, between 0 and 1, default: 0.9
-        :type max_occupancy:   float
         """
         for src_host in host_list:
             try:
@@ -472,8 +469,7 @@ class SegregationManager(object):
                     try:
                         self.migrate_vm(vm=vm,
                                         dst_host=dst_host,
-                                        src_host=src_host,
-                                        max_occupancy=max_occupancy)
+                                        src_host=src_host)
                     except MigrateVMWithAffinity:
                         continue
                     except FilteredDomain:
@@ -484,7 +480,7 @@ class SegregationManager(object):
                 break
         return
 
-    def segregate(self, host_list, max_occupancy=0.9):
+    def segregate(self, host_list):
         """ Hard segregation works by moving away all the Linux virtual
         machine from the pivot, which is the host with the greatest amount of
         Windows virtual machines, and then moving Windows virtual machines to
@@ -493,9 +489,6 @@ class SegregationManager(object):
         
         :param host_list:      list of host instances
         :type host_list:       list
-        :param max_occupancy:  max occupancy ratio permitted at destination 
-                               host, between 0 and 1, default: 0.9
-        :type max_occupancy:   float
         """
         win_counter = 0
 
@@ -523,8 +516,7 @@ class SegregationManager(object):
 
         self.migrate_linux_from_host(
             src_host=pivot,
-            host_list=host_list,
-            max_occupancy=max_occupancy
+            host_list=host_list
         )
 
         print "\tMigrating Windows virtual machines to %s" % \
@@ -532,12 +524,11 @@ class SegregationManager(object):
 
         self.migrate_windows_to_host(
             dst_host=pivot,
-            host_list=host_list,
-            max_occupancy=max_occupancy
+            host_list=host_list
         )
 
         try:
-            self.segregate(remaining_hosts, max_occupancy=max_occupancy)
+            self.segregate(remaining_hosts)
         except IndexError:
             print "No more iterations possible for this cluster."
 
@@ -615,6 +606,7 @@ class CloudStack(SignedAPICall):
         :return:               true if successfully migrated or false otherwise
         :rtype:                bool
         """
+
         request = {'virtualmachineid': vm.vm_id, 'hostid': dst_host.host_id}
 
         # start async api call:
