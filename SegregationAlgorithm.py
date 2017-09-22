@@ -40,6 +40,14 @@ class FilteredDomain(Exception):
     pass
 
 
+class DisabledResources(Exception):
+    """Raised if a virtual machine is migrated to a disabled host"""
+    def __init__(self):
+        msg = "Won't migrate to a host with disabled resources."
+        Exception.__init__(self, msg)
+    pass
+
+
 class DedicatedHostAsDestination(Exception):
     """Raised if a virtual machine tries to be migrated to a dedicated host"""
     def __init__(self):
@@ -132,7 +140,7 @@ class Host(object):
 
     def __init__(self, host_id, fqdn=None, memory_total=None,
                  memory_used=None, memory_allocated=None, dedicated=False,
-                 ip_address=None):
+                 ip_address=None, resource_state=None):
         self.host_id = host_id
         self.fqdn = fqdn
         self.vms = list()
@@ -141,6 +149,7 @@ class Host(object):
         self.memory_allocated = memory_allocated
         self.dedicated = dedicated
         self.ip_address = ip_address
+        self.resource_state = resource_state
         self.migrations_in = 0
         self.migrations_out = 0
 
@@ -335,9 +344,14 @@ class SegregationManager(object):
                       key=methodcaller('amount_of_windows_vms'),
                       reverse=reverse)
 
-    def filter_domains(self, *uuid):
+    def filter_domains(self, *domain_name):
+        """ Append a series of domains names to a filter, which won't 
+        processed during migrations.
 
-        for e in uuid:
+        :param domain_name:     name of the domain to be filtered
+        :type domain_name:      str
+        """
+        for e in domain_name:
             self.filtered_domains.append(e)
 
     def migrate_vm(self, vm, src_host, dst_host):
@@ -362,6 +376,9 @@ class SegregationManager(object):
                 'Filtered', vm, src_host, dst_host
             )
             raise FilteredDomain
+
+        if not dst_host.resource_state == "Enabled":
+            raise DisabledResources
 
         if dst_host.is_dedicated():
             raise DedicatedHostAsDestination
@@ -443,6 +460,8 @@ class SegregationManager(object):
                         continue
                     except MigrateVMWithAffinity:
                         continue
+                    except DisabledResources:
+                        continue
             except FilteredDomain:
                 continue
 
@@ -471,6 +490,8 @@ class SegregationManager(object):
                     except FilteredDomain:
                         continue
             except SameSourceAndDestinationHost:
+                continue
+            except DisabledResources:
                 continue
             except NotEnoughResources:
                 break
@@ -503,7 +524,9 @@ class SegregationManager(object):
             reverse=True
         )
 
+        # host with the greatest amount of windows virtual machines:
         pivot = sorted_host_list[0]
+
         remaining_hosts = sorted_host_list[1:]
 
         print "Current host: %s" % pivot.fqdn
@@ -703,6 +726,7 @@ class CloudStack(SignedAPICall):
                      memory_total=host['memorytotal'],
                      memory_used=host['memoryused'],
                      ip_address=host['ipaddress'],
+                     resource_state=host['resourcestate'],
                      dedicated=(True if is_dedicated else False))
 
             vm_list = self.listVirtualMachines(
