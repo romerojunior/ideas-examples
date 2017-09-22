@@ -607,8 +607,13 @@ class CloudStack(SignedAPICall):
         return handler_function
 
     def _http_get(self, url):
-        response = urllib.urlopen(url)
-        return response.read()
+        try:
+            response = urllib.urlopen(url)
+            return response.read()
+        # multiple IOError sources, generic handler:
+        except IOError, e:
+            print e
+            exit(1)
 
     def _make_request(self, command, args):
         args['response'] = 'json'
@@ -679,12 +684,18 @@ class CloudStack(SignedAPICall):
         """
         result = deque()
 
-        host_list = self.listHosts({'clusterid': cluster_id})
+        host_list = self.listHosts(
+            {
+                'clusterid': cluster_id
+            })
 
         for host in host_list['host']:
 
-            is_dedicated = self.listDedicatedHosts({'hostid': host['id'],
-                                                    'listall': 'true'})
+            is_dedicated = self.listDedicatedHosts(
+                {
+                    'hostid': host['id'],
+                    'listall': 'true'
+                })
 
             h = Host(host_id=host['id'],
                      fqdn=host['name'],
@@ -694,8 +705,12 @@ class CloudStack(SignedAPICall):
                      ip_address=host['ipaddress'],
                      dedicated=(True if is_dedicated else False))
 
-            vm_list = self.listVirtualMachines({'hostid': h.host_id,
-                                                'listall': 'true'})
+            vm_list = self.listVirtualMachines(
+                {
+                 'hostid': h.host_id,
+                 'listall': 'true'
+                })
+
             if vm_list:
 
                 for vm in vm_list['virtualmachine']:
